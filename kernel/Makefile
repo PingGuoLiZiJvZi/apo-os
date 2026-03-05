@@ -9,13 +9,26 @@ BUILD_DIR  := ../build
 KERNEL_ELF := $(BUILD_DIR)/kernel.elf
 KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 
-CFLAGS  := -Wall -Werror -O2 -ffreestanding -nostdlib \
+CFLAGS  := -Wall -O -g -ffreestanding -nostdlib \
            -march=rv64gc -mabi=lp64d -mcmodel=medany \
-           -I.
-LDFLAGS := -T linker.ld -nostdlib
+           -I. -Idtc-1.7.2/libfdt -Ilibc
+LDFLAGS := -T main/linker.ld -nostdlib
 
-C_SRCS := $(shell find . -name '*.c')
-S_SRCS := $(shell find . -name '*.S')
+# 查找当前目录下所有 C 文件，但是排除 dtc-1.7.2 目录
+C_SRCS_BASE := $(shell find . -name '*.c' ! -path './dtc-1.7.2/*')
+# 增加我们需要用到的 libfdt 的 C 文件
+C_SRCS := $(C_SRCS_BASE) \
+          ./dtc-1.7.2/libfdt/fdt.c \
+          ./dtc-1.7.2/libfdt/fdt_ro.c \
+          ./dtc-1.7.2/libfdt/fdt_wip.c \
+          ./dtc-1.7.2/libfdt/fdt_sw.c \
+          ./dtc-1.7.2/libfdt/fdt_rw.c \
+          ./dtc-1.7.2/libfdt/fdt_strerror.c \
+          ./dtc-1.7.2/libfdt/fdt_empty_tree.c \
+          ./dtc-1.7.2/libfdt/fdt_addresses.c \
+          ./dtc-1.7.2/libfdt/fdt_overlay.c
+
+S_SRCS := $(shell find . -name '*.S' ! -path './dtc-1.7.2/*')
 
 C_OBJS := $(patsubst ./%, $(BUILD_DIR)/%, $(C_SRCS:.c=.o))
 S_OBJS := $(patsubst ./%, $(BUILD_DIR)/%, $(S_SRCS:.S=.o))
@@ -23,7 +36,7 @@ OBJS   := $(S_OBJS) $(C_OBJS)
 
 DEPS := $(C_OBJS:.o=.d)
 
-.PHONY: all clean run run-gui disasm
+.PHONY: all clean run run-gui disasm debug
 
 all: $(KERNEL_BIN)
 
@@ -35,7 +48,7 @@ $(BUILD_DIR)/%.o: ./%.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL_ELF): $(OBJS) linker.ld
+$(KERNEL_ELF): $(OBJS) main/linker.ld
 	$(LD) $(LDFLAGS) $(OBJS) -o $@
 
 $(KERNEL_BIN): $(KERNEL_ELF)
@@ -48,9 +61,15 @@ disasm: $(KERNEL_ELF)
 
 QEMU := qemu-system-riscv64
 QEMU_ARGS := -machine virt -bios default -kernel $(KERNEL_BIN)
+GDB_PORT ?= 1234
 
 run: $(KERNEL_BIN)
 	$(QEMU) $(QEMU_ARGS) -nographic
+
+debug: $(KERNEL_BIN)
+	@echo "Starting QEMU with GDB server on port $(GDB_PORT) (paused, waiting for GDB)..."
+	@echo "Connect with: gdb-multiarch $(KERNEL_ELF) -ex 'target remote :$(GDB_PORT)'"
+	$(QEMU) $(QEMU_ARGS) -nographic -S -gdb tcp::$(GDB_PORT)
 
 clean:
 	rm -rf $(BUILD_DIR)

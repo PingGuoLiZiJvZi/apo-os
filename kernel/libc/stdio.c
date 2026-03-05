@@ -1,5 +1,5 @@
 #include "stdio.h"
-#include "../sbi.h"
+#include "../main/sbi.h"
 
 void putchar(char c)
 {
@@ -85,18 +85,36 @@ int printf(const char *fmt, ...)
         fmt++; /* skip '%' */
 
         switch (*fmt) {
+        case 'l':
+            fmt++; // skip 'l'
+            if (*fmt == 'x') {
+                unsigned long val = va_arg(ap, unsigned long);
+                print_hex(val);
+            } else if (*fmt == 'd') {
+                long val = va_arg(ap, long);
+                print_dec(val, 1);
+            } else if (*fmt == 'u') {
+                unsigned long val = va_arg(ap, unsigned long);
+                print_dec((long)val, 0);
+            } else {
+                putchar('%');
+                putchar('l');
+                putchar(*fmt);
+                count += 3;
+            }
+            break;
         case 'd': {
-            long val = va_arg(ap, long);
+            long val = va_arg(ap, int);
             print_dec(val, 1);
             break;
         }
         case 'u': {
-            unsigned long val = va_arg(ap, unsigned long);
+            unsigned long val = va_arg(ap, unsigned int);
             print_dec((long)val, 0);
             break;
         }
         case 'x': {
-            unsigned long val = va_arg(ap, unsigned long);
+            unsigned long val = va_arg(ap, unsigned int);
             print_hex(val);
             break;
         }

@@ -1,5 +1,5 @@
 #include "system.h"
-#include "../sbi.h"
+#include "../main/sbi.h"
 #include "../libc/stdio.h"
 
 void panic(const char *msg)
