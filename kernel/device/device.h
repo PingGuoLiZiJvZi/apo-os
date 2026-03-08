@@ -5,6 +5,7 @@
 
 #define UART0_BASE      0x10000000UL
 #define UART0_IRQ       10
+#define VIRTIO0_IRQ     1
 
 #define UART_RHR        0   // Receive Holding Register (read)  
 #define UART_THR        0   // Transmit Holding Register (write) 

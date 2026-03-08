@@ -174,6 +174,12 @@ static void map_mmio_memory() {
     if (map_pages(kernel_pagetable, plic_base, plic_base, 0x600000, PTE_R | PTE_W) != 0) {
         panic("map_mmio_memory: failed to map PLIC");
     }
+
+    // VirtIO MMIO devices (QEMU virt: 0x10001000 .. 0x10008000, 8 slots × 0x1000)
+    uint64_t virtio_base = 0x10001000;
+    if (map_pages(kernel_pagetable, virtio_base, virtio_base, 8 * PAGE_SIZE, PTE_R | PTE_W) != 0) {
+        panic("map_mmio_memory: failed to map VirtIO");
+    }
 }
 
 static void enable_vm() {

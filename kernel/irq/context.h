@@ -7,10 +7,10 @@
 
 typedef struct Context {
     uint64_t gprs[32];
-    uint64_t sepc;
-    uint64_t sstatus;
-    uint64_t scause;
-    void* pdir;
+    uint64_t scause;     
+    uint64_t sstatus;    
+    uint64_t sepc;       
+    void* pdir;          
 } Context;
 
 #define GPR1 gprs[17]

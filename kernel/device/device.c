@@ -39,9 +39,11 @@ int uart_getchar() {
 
 void plic_init() {
     mmio_write32(PLIC_PRIORITY(UART0_IRQ), 1);
+    mmio_write32(PLIC_PRIORITY(VIRTIO0_IRQ), 1);
 
     uint32_t enable = mmio_read32(PLIC_SENABLE(0));
     enable |= (1U << UART0_IRQ);
+    enable |= (1U << VIRTIO0_IRQ);
     mmio_write32(PLIC_SENABLE(0), enable);
 
     mmio_write32(PLIC_SPRIORITY(0), 0);

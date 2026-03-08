@@ -32,3 +32,8 @@ void reboot()
     while (1)
         asm volatile("wfi");
 }
+
+
+void yield() {
+    asm volatile("ecall");
+}

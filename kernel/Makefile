@@ -52,10 +52,16 @@ disasm: $(KERNEL_ELF)
 	@echo "  -> $(BUILD_DIR)/kernel.asm"
 
 QEMU := qemu-system-riscv64
-QEMU_ARGS := -machine virt -bios default -kernel $(KERNEL_BIN)
+DISK_IMG := $(BUILD_DIR)/disk.img
+QEMU_ARGS := -machine virt -bios default -kernel $(KERNEL_BIN) \
+             -drive file=$(DISK_IMG),format=raw,id=hd0 \
+             -device virtio-blk-device,drive=hd0
 GDB_PORT ?= 1234
 
-run: $(KERNEL_BIN)
+$(DISK_IMG):
+	dd if=/dev/zero of=$@ bs=1M count=16
+
+run: $(KERNEL_BIN) $(DISK_IMG)
 	$(QEMU) $(QEMU_ARGS) -nographic
 
 debug: $(KERNEL_BIN)

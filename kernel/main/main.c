@@ -3,6 +3,7 @@
 #include "../memory/memory.h"
 #include "../irq/context.h"
 #include "../device/device.h"
+#include "../disk/disk.h"
 
 void syscall_handler(Context *c) { c; /* TODO */ }
 void main(unsigned long hartid, const void *dtb)
@@ -14,9 +15,8 @@ void main(unsigned long hartid, const void *dtb)
 
     init_memory();// initial memory manager 
     init_device();// initial device - UART, PLIC, CLINT
-
-    // init_disk();// 初始化磁盘
-    // init_irq();// 初始化中断
+    init_disk();// initial disk
+    disk_test();
     // init_fs();// 初始化文件系统
     // init_proc();// 初始化进程
 
