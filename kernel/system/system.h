@@ -5,9 +5,9 @@
 void panic(const char *msg);
 
 /* 通过 SBI SRST 关机 */
-void shutdown(void);
+void shutdown();
 
 /* 通过 SBI SRST 冷重启 */
-void reboot(void);
+void reboot();
 
 #endif /* __SYSTEM_H__ */

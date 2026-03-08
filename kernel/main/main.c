@@ -1,37 +1,20 @@
 #include "../libc/stdio.h"
-#include <libfdt.h>
 #include "../system/system.h"
 #include "../memory/memory.h"
+#include "../irq/context.h"
+#include "../device/device.h"
 
-// void init_memory(void);
-// void init_device(void);
-// void init_disk(void);
-// void init_irq(void);
-// void init_fs(void);
-// void init_proc(void);
-
+void syscall_handler(Context *c) { c; /* TODO */ }
 void main(unsigned long hartid, const void *dtb)
 {
-    extern void trap_vector(void);
-    asm volatile("csrw stvec, %0" : : "r"((unsigned long)trap_vector));
-
     printf("Booting ApplePlumOrange OS...\n");
     printf("  Hart ID : %d\n", hartid);
-    printf("  DTB addr: %p\n\n", dtb);
+    extern void trap();
+    asm volatile("csrw stvec, %0" : : "r"((uint64_t)trap));
 
-    int err = fdt_check_header(dtb);
-    if (err != 0) {
-        printf("FDT Error: Invalid device tree (libfdt error: %d)\n", err);
-    } else {
-        printf("FDT initialized successfully via libfdt.\n");
-        printf("  Total Size: %d bytes\n", fdt_totalsize(dtb));
-        printf("  Version: %d\n", fdt_version(dtb));
-    }
+    init_memory();// initial memory manager 
+    init_device();// initial device - UART, PLIC, CLINT
 
-
-    init_memory(dtb);// initial memory manager 
-
-    init_device(dtb);// initial device - only uart in stage1
     // init_disk();// 初始化磁盘
     // init_irq();// 初始化中断
     // init_fs();// 初始化文件系统

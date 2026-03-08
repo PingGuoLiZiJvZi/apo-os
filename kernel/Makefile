@@ -14,19 +14,11 @@ CFLAGS  := -Wall -O -g -ffreestanding -nostdlib \
            -I. -Idtc-1.7.2/libfdt -Ilibc
 LDFLAGS := -T main/linker.ld -nostdlib
 
-# 查找当前目录下所有 C 文件，但是排除 dtc-1.7.2 目录
-C_SRCS_BASE := $(shell find . -name '*.c' ! -path './dtc-1.7.2/*')
-# 增加我们需要用到的 libfdt 的 C 文件
-C_SRCS := $(C_SRCS_BASE) \
-          ./dtc-1.7.2/libfdt/fdt.c \
-          ./dtc-1.7.2/libfdt/fdt_ro.c \
-          ./dtc-1.7.2/libfdt/fdt_wip.c \
-          ./dtc-1.7.2/libfdt/fdt_sw.c \
-          ./dtc-1.7.2/libfdt/fdt_rw.c \
-          ./dtc-1.7.2/libfdt/fdt_strerror.c \
-          ./dtc-1.7.2/libfdt/fdt_empty_tree.c \
-          ./dtc-1.7.2/libfdt/fdt_addresses.c \
-          ./dtc-1.7.2/libfdt/fdt_overlay.c
+# 查找当前目录下所有 C 文件
+C_SRCS_BASE := $(shell find . -name '*.c')
+
+C_SRCS := $(C_SRCS_BASE) 
+
 
 S_SRCS := $(shell find . -name '*.S' ! -path './dtc-1.7.2/*')
 

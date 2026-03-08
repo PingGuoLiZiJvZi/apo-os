@@ -2,18 +2,17 @@
 #include "../libc/stdio.h"
 #include "../libc/string.h"
 #include "../system/system.h"
-#include <libfdt.h>
 
 extern char _bss_end[]; 
 extern char _stack_top[];
 
 // Free list structure: stored directly inside the free pages 
-struct run {
-    struct run *next;
+struct Run {
+    struct Run *next;
 };
 
 static struct {
-    struct run *freelist;
+    struct Run *freelist;
 } kmem;
 
 // Round up to the nearest page boundary 
@@ -38,7 +37,7 @@ void kfree(void *pa) {
     // Fill with junk to catch dangling refs.
     memset(pa, 1, PAGE_SIZE);
 
-    struct run *r = (struct run *)pa;
+    struct Run *r = (struct Run *)pa;
     r->next = kmem.freelist;
     kmem.freelist = r;
 }
@@ -47,8 +46,8 @@ void kfree(void *pa) {
 // Allocate a 4096-byte physical page.
 // Returns a pointer that the kernel can use, or NULL if out of memory.
 
-void *kalloc(void) {
-    struct run *r = kmem.freelist;
+void *kalloc() {
+    struct Run *r = kmem.freelist;
     if (r) {
         kmem.freelist = r->next;
         memset((void*)r, 5, PAGE_SIZE); // Fill with another junk to catch bugs
@@ -90,10 +89,8 @@ static void free_range(void *pa_start, void *pa_end) {
 
 static uint64_t *kernel_pagetable;
 
-/*
- * Return the address of the PTE in page table 'pagetable' that corresponds to virtual address 'va'. 
- * If 'alloc' is true, create any missing page directory pages.
- */
+// Return the address of the PTE in page table 'pagetable' that corresponds to virtual address 'va'. 
+// If 'alloc' is true, create any missing page directory pages.
 static uint64_t *walk(uint64_t *pagetable, uint64_t va, int alloc) {
     if (va >= (1ULL << 38)) { 
         // Sv39 supports 39-bit VA (up to 512GB). 
@@ -119,11 +116,9 @@ static uint64_t *walk(uint64_t *pagetable, uint64_t va, int alloc) {
     return &pagetable[PX(0, va)];
 }
 
-/*
- * Create PTEs for virtual addresses starting at `va` that refer to
- * physical addresses starting at `pa`. `va` and size must be page-aligned.
- * Returns 0 on success, -1 on failure.
- */
+// Create PTEs for virtual addresses starting at `va` that refer to
+// physical addresses starting at `pa`. `va` and size must be page-aligned.
+// Returns 0 on success, -1 on failure.
 static int map_pages(uint64_t *pagetable, uint64_t va, uint64_t pa, uint64_t size, uint64_t perm) {
     uint64_t a, last;
     uint64_t *pte;
@@ -147,27 +142,21 @@ static int map_pages(uint64_t *pagetable, uint64_t va, uint64_t pa, uint64_t siz
     }
     return 0;
 }
-/* Module-level memory layout info, populated by init_memory() */
-static uint64_t ram_base;
-static uint64_t ram_size;
-static uint64_t ram_end;
 
-/*
- * Identity-map the entire physical RAM region.
- * VA == PA for [ram_base, ram_end).
- */
-static void map_kernel_memory(void) {
+static uint64_t ram_end = 0x88000000;
+static uint64_t ram_base = 0x80000000;
+static uint64_t kernel_end;
+
+// VA == PA for [ram_base, ram_end).
+static void map_kernel_memory() {
     printf("Mapping physical memory 0x%lx -> 0x%lx (Identity Map)...\n", ram_base, ram_end);
-    if (map_pages(kernel_pagetable, ram_base, ram_base, ram_size, PTE_R | PTE_W | PTE_X) != 0) {
+    if (map_pages(kernel_pagetable, ram_base, ram_base, ram_end - ram_base, PTE_R | PTE_W | PTE_X) != 0) {
         panic("map_kernel_memory: failed to map physical RAM");
     }
 }
 
-/*
- * Identity-map MMIO device regions so the kernel can access
- * hardware registers after the MMU is enabled.
- */
-static void map_mmio_memory(void) {
+
+static void map_mmio_memory() {
     // UART0 (8250 compatible, QEMU virt: 0x10000000)
     uint64_t uart_base = 0x10000000;
     if (map_pages(kernel_pagetable, uart_base, uart_base, PAGE_SIZE, PTE_R | PTE_W) != 0) {
@@ -187,10 +176,7 @@ static void map_mmio_memory(void) {
     }
 }
 
-/*
- * Flush the TLB, write SATP to activate Sv39 paging, then flush again.
- */
-static void enable_vm(void) {
+static void enable_vm() {
     asm volatile("sfence.vma zero, zero");
 
     uint64_t satp = MAKE_SATP((uint64_t)kernel_pagetable);
@@ -202,69 +188,9 @@ static void enable_vm(void) {
     printf("MMU enabled successfully! Virtual memory is now active.\n");
 }
 
-/*
- * init_memory — called once at boot.
- *
- * 1. Parse DTB to discover the physical memory layout.
- * 2. Initialise the physical page allocator (free-list).
- * 3. Build the kernel page table (identity map RAM + MMIO).
- * 4. Enable Sv39 virtual memory.
- */
-static void parse_dtb_memory(const void *dtb) {
-    if (fdt_check_header(dtb) != 0) {
-        panic("init_memory: invalid dtb");
-    }
-
-    // device tree phasing
-
-    int root_node = fdt_path_offset(dtb, "/");
-    if (root_node < 0) {
-        panic("init_memory: no root node in dtb");
-    }
-
-    int ac = fdt_address_cells(dtb, root_node);
-    int sc = fdt_size_cells(dtb, root_node);
-
-    if (ac != 2 || sc != 2) {
-        printf("Warning: Expected address/size cells = 2, got ac=%d, sc=%d. Might fail parsing memory!\n", ac, sc);
-    }
-
-    int mem_node = fdt_path_offset(dtb, "/memory");
-    if (mem_node < 0) {
-        mem_node = fdt_node_offset_by_prop_value(dtb, -1, "device_type", "memory", 7);
-        if (mem_node < 0) {
-            panic("init_memory: no memory node found in dtb");
-        }
-    }
-
-    int len;
-    const fdt32_t *reg = fdt_getprop(dtb, mem_node, "reg", &len);
-    if (!reg || len < (ac + sc) * (int)sizeof(fdt32_t)) {
-        panic("init_memory: invalid memory reg property");
-    }
-
-    if (ac == 2) {
-        ram_base = ((uint64_t)fdt32_to_cpu(reg[0]) << 32) | fdt32_to_cpu(reg[1]);
-        reg += 2;
-    } else {
-        ram_base = fdt32_to_cpu(reg[0]);
-        reg += 1;
-    }
-
-    if (sc == 2) {
-        ram_size = ((uint64_t)fdt32_to_cpu(reg[0]) << 32) | fdt32_to_cpu(reg[1]);
-    } else {
-        ram_size = fdt32_to_cpu(reg[0]);
-    }
-
-    ram_end = ram_base + ram_size;
-
-    printf("Memory: base=0x%lx, size=0x%lx bytes\n", ram_base, ram_size);
-}
-
 static void init_physical_memory() {
     // init manage manager
-    uint64_t kernel_end = align_up((uint64_t)_stack_top, PAGE_SIZE);
+    kernel_end = align_up((uint64_t)_stack_top, PAGE_SIZE);
 
     printf("Kernel physical end: 0x%lx\n", kernel_end);
     printf("Initializing free list from 0x%lx to 0x%lx\n", kernel_end, ram_end);
@@ -289,8 +215,7 @@ static void init_virtual_memory() {
     enable_vm();
 }
 
-void init_memory(const void *dtb) {
-    parse_dtb_memory(dtb);
+void init_memory() {
     init_physical_memory();
     init_virtual_memory();
 }

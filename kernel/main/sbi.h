@@ -3,15 +3,15 @@
 
 #include <stdint.h>
 
-struct sbi_ret {
+struct SbiRet {
     long error;
     long value;
 };
 
-static inline struct sbi_ret sbi_call(long ext, long fid,
+static inline struct SbiRet sbi_call(long ext, long fid,
                                       long arg0, long arg1, long arg2)
 {
-    struct sbi_ret ret;
+    struct SbiRet ret;
     register long a0 asm("a0") = arg0;
     register long a1 asm("a1") = arg1;
     register long a2 asm("a2") = arg2;

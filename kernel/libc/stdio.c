@@ -1,9 +1,9 @@
 #include "stdio.h"
-#include "../main/sbi.h"
+#include "../device/device.h"
 
 void putchar(char c)
 {
-    sbi_console_putchar(c);
+    uart_putchar(c);
 }
 
 void puts(const char *s)

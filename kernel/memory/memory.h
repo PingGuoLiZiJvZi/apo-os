@@ -6,8 +6,8 @@
 
 #define PAGE_SIZE 4096
 
-void init_memory(const void *dtb);
-void *kalloc(void);
+void init_memory();
+void *kalloc();
 void kfree(void *pa);
 
 #endif /* __MEMORY_H__ */ 

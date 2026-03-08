@@ -13,7 +13,7 @@ void panic(const char *msg)
         asm volatile("wfi");
 }
 
-void shutdown(void)
+void shutdown()
 {
     printf("Shutting down...\n");
     sbi_system_reset(SBI_SRST_RESET_TYPE_SHUTDOWN,
@@ -23,7 +23,7 @@ void shutdown(void)
         asm volatile("wfi");
 }
 
-void reboot(void)
+void reboot()
 {
     printf("Rebooting...\n");
     sbi_system_reset(SBI_SRST_RESET_TYPE_COLD_REBOOT,

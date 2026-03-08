@@ -1,0 +1,21 @@
+#ifndef CONTEXT_H
+#define CONTEXT_H
+#include<stdint.h>
+#define YIELD      8
+#define IRQ_TIMER  0x8000000000000005UL
+#define IRQ_UART   0x8000000000000009UL
+
+typedef struct Context {
+    uint64_t gprs[32];
+    uint64_t sepc;
+    uint64_t sstatus;
+    uint64_t scause;
+    void* pdir;
+} Context;
+
+#define GPR1 gprs[17]
+#define GPR2 gprs[10]
+#define GPR3 gprs[11]
+#define GPR4 gprs[12]
+#define GPRx gprs[10]
+#endif
