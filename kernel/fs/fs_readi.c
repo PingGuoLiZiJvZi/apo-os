@@ -2,7 +2,7 @@
 int readi(Inode *ip, char *dst, uint32_t off, uint32_t n) {
     uint32_t tot, m;
     uint32_t block_idx;
-    uint32_t disk_block;
+    uint32_t disk_block = 0;
     char temp_buf[BLOCK_SIZE];
     uint32_t indirect_buf[NINDIRECT]; // Buffer for indirect pointers
 
@@ -46,7 +46,7 @@ int readi(Inode *ip, char *dst, uint32_t off, uint32_t n) {
             dst[i] = temp_buf[(off % BLOCK_SIZE) + i];
         }
     }
-    return n;
+    return tot;
 }
 
 void iget(uint32_t inum, Inode *ip_out) {

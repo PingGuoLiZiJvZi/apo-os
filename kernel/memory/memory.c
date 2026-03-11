@@ -68,30 +68,14 @@ static void free_range(void *pa_start, void *pa_end) {
     }
 }
 
-// Sv39 Page Table Definitions 
-#define PTE_V     (1L << 0) // Valid
-#define PTE_R     (1L << 1)
-#define PTE_W     (1L << 2)
-#define PTE_X     (1L << 3)
-#define PTE_U     (1L << 4) // User
+// Sv39 PTE definitions are in memory.h
 
-// extract physical address from PTE
-#define PTE2PA(pte) (((pte) >> 10) << 12)
-// convert physical address to PTE
-#define PA2PTE(pa)  ((((uint64_t)pa) >> 12) << 10)
 
-// 9 bits per level, 3 levels, page size = 4096 (12 bits)
-#define PX(level, va) ((((uint64_t)(va)) >> (12 + 9 * (level))) & 0x1FF)
-
-// SATP Mode 8 is Sv39
-#define SATP_SV39 (8ULL << 60)
-#define MAKE_SATP(pagetable) (SATP_SV39 | (((uint64_t)pagetable) >> 12))
-
-static uint64_t *kernel_pagetable;
+uint64_t *kernel_pagetable;
 
 // Return the address of the PTE in page table 'pagetable' that corresponds to virtual address 'va'. 
 // If 'alloc' is true, create any missing page directory pages.
-static uint64_t *walk(uint64_t *pagetable, uint64_t va, int alloc) {
+uint64_t *walk(uint64_t *pagetable, uint64_t va, int alloc) {
     if (va >= (1ULL << 38)) { 
         // Sv39 supports 39-bit VA (up to 512GB). 
         // We do not handle negative upper half logic thoroughly right now.
@@ -119,7 +103,7 @@ static uint64_t *walk(uint64_t *pagetable, uint64_t va, int alloc) {
 // Create PTEs for virtual addresses starting at `va` that refer to
 // physical addresses starting at `pa`. `va` and size must be page-aligned.
 // Returns 0 on success, -1 on failure.
-static int map_pages(uint64_t *pagetable, uint64_t va, uint64_t pa, uint64_t size, uint64_t perm) {
+int map_pages(uint64_t *pagetable, uint64_t va, uint64_t pa, uint64_t size, uint64_t perm) {
     uint64_t a, last;
     uint64_t *pte;
 

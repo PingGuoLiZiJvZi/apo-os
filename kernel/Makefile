@@ -58,8 +58,16 @@ QEMU_ARGS := -machine virt -bios default -kernel $(KERNEL_BIN) \
              -device virtio-blk-device,drive=hd0
 GDB_PORT ?= 1234
 
-$(DISK_IMG):
-	dd if=/dev/zero of=$@ bs=1M count=16
+MKFS_SRC := ../usr/mkfs.c
+MKFS_BIN := $(BUILD_DIR)/mkfs
+DISK_ROOT := ../usr/disk
+
+$(MKFS_BIN): $(MKFS_SRC)
+	@mkdir -p $(dir $@)
+	gcc -Wall -O -o $@ $<
+
+$(DISK_IMG): $(MKFS_BIN) $(shell find $(DISK_ROOT) -type f -o -type d)
+	$(MKFS_BIN) $@ $(DISK_ROOT)
 
 run: $(KERNEL_BIN) $(DISK_IMG)
 	$(QEMU) $(QEMU_ARGS) -nographic

@@ -124,3 +124,21 @@ char *strrchr(const char *s, int c)
     }
     return (char *)last;
 }
+
+char *strcpy(char *dest, const char *src)
+{
+    char *d = dest;
+    while ((*d++ = *src++) != '\0')
+        ;
+    return dest;
+}
+
+char *strncpy(char *dest, const char *src, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n && src[i] != '\0'; i++)
+        dest[i] = src[i];
+    for (; i < n; i++)
+        dest[i] = '\0';
+    return dest;
+}

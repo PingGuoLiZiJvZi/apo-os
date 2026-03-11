@@ -6,7 +6,7 @@ void iupdate(Inode *ip, uint32_t inum);
 int writei(Inode *ip, char *src, uint32_t off, uint32_t n, uint32_t inum) {
     uint32_t tot, m;
     uint32_t block_idx;
-    uint32_t disk_block;
+    uint32_t disk_block = 0;
     char temp_buf[BLOCK_SIZE];
     uint32_t indirect_buf[NINDIRECT];
 

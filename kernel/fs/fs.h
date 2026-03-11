@@ -38,7 +38,7 @@ typedef struct SuperBlock{
     uint32_t bmap_start; // Data block bitmap start block
 } SuperBlock;
 
-SuperBlock sb;
+extern SuperBlock sb;
 
 typedef struct Inode{
     uint16_t type;
@@ -62,15 +62,16 @@ typedef struct File{
 
 // Global file table 
 
-File file_table[NFILE];
+extern File file_table[NFILE];
 
-void fs_init();
+void init_fs();
 
 File* fs_open(const char *path);             
 void fs_close(File *f);                     
 int fs_read(File *f, void *buf, size_t n); 
 int fs_write(File *f, void *buf, size_t n);
-int fs_seek(File *f, uint32_t off);       
+int fs_seek(File *f, uint32_t off);
+uint32_t fs_filesize(File *f);
 
 // File* fs_create(const char *path, uint16_t type);
 // int fs_unlink(const char *path);      
@@ -86,5 +87,5 @@ typedef struct {
 // int fs_readdir(File *dir, char *name, uint32_t *inum); 
 
 uint32_t balloc(void); // Allocate a zeroed disk block
-
+void fs_test();
 #endif
