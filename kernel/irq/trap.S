@@ -21,12 +21,13 @@ f(30) f(31)
 #define PUSH(n) STORE concat(x, n), (n * XLEN)(sp);
 #define POP(n)  LOAD  concat(x, n), (n * XLEN)(sp);
 
-#define CONTEXT_SIZE  ((NR_REGS + 4) * XLEN)
+#define CONTEXT_SIZE  ((NR_REGS + 5) * XLEN)
 #define OFFSET_SP     ( 2 * XLEN)
 #define OFFSET_CAUSE  ((NR_REGS + 0) * XLEN)
 #define OFFSET_STATUS ((NR_REGS + 1) * XLEN)
 #define OFFSET_EPC    ((NR_REGS + 2) * XLEN)
-#define OFFSET_NP     ((NR_REGS + 3) * XLEN)
+#define OFFSET_PDIR   ((NR_REGS + 3) * XLEN)
+#define OFFSET_NP     ((NR_REGS + 4) * XLEN)
 #define KERNEL 0
 #define USER   1
 
@@ -36,29 +37,30 @@ trap:
   csrrw sp, sscratch, sp   # (1) atomically exchange sp and sscratch
   bnez sp, save_context    # (2) take the branch if we trapped from user
   csrr sp, sscratch        # (3) if we trapped from kernel, restore the original sp
-  j save_context
 
 save_context:
   addi sp, sp, -CONTEXT_SIZE
 
   MAP(REGS, PUSH)
 
-  # 检测 sp 和 sscratch 中的值
-  # 如果 sp + CONTEXT_SIZE == sscratch，即 ksp == 0，np 为内核
-  # 若不等，则 ksp != 0，np 为 USER
-  # 随后，将 ksp 置零
+  # Save satp into OFFSET_PDIR
+  csrr t0, satp
+  STORE t0, OFFSET_PDIR(sp)
 
+  # Detect privilege level (NP):
+  # If sscratch == sp + CONTEXT_SIZE, we trapped from kernel (sscratch was 0,
+  # so we restored original sp which equals sp + CONTEXT_SIZE after the addi).
+  # Otherwise we trapped from user.
   csrr t0, sscratch
   addi t1, sp, CONTEXT_SIZE
   beq t0, t1, kernel_trap
   li t0, USER
-  li t1, KERNEL
   STORE t0, OFFSET_NP(sp)
   j np_end
 
 kernel_trap:
-  STORE t1, OFFSET_NP(sp)
-  j np_end
+  li t0, KERNEL
+  STORE t0, OFFSET_NP(sp)
 
 np_end:
   csrr t0, sscratch
@@ -77,6 +79,11 @@ np_end:
   call trap_handle
   mv sp, a0
 
+  # Restore satp from OFFSET_PDIR (context switch may have changed it)
+  LOAD t0, OFFSET_PDIR(sp)
+  csrw satp, t0
+  sfence.vma zero, zero
+
   LOAD t1, OFFSET_STATUS(sp)
   LOAD t2, OFFSET_EPC(sp)
   csrw sstatus, t1
@@ -91,6 +98,41 @@ np_end:
   sret
 
 kernel_restore:
+  MAP(REGS, POP)
+  addi sp, sp, CONTEXT_SIZE
+  sret
+  
+# Direct context restore for bootstrap: restores satp, sstatus, sepc,
+# all GPRs, and srets into the target context.  Never returns.
+.align 3
+.globl asm_switch
+asm_switch:
+  # a0 = pointer to Context
+
+  # Restore satp
+  LOAD t0, OFFSET_PDIR(a0)
+  csrw satp, t0
+  sfence.vma zero, zero
+
+  # Restore sstatus and sepc
+  LOAD t1, OFFSET_STATUS(a0)
+  LOAD t2, OFFSET_EPC(a0)
+  csrw sstatus, t1
+  csrw sepc, t2
+
+  # Check NP: if kernel, sscratch = 0; if user, sscratch = sp + CONTEXT_SIZE
+  LOAD t3, OFFSET_NP(a0)
+  beqz t3, 1f
+  addi t0, a0, CONTEXT_SIZE
+  csrw sscratch, t0
+  mv sp, a0
+  MAP(REGS, POP)
+  LOAD sp, OFFSET_SP(sp)
+  sret
+
+1:
+  csrw sscratch, zero
+  mv sp, a0
   MAP(REGS, POP)
   addi sp, sp, CONTEXT_SIZE
   sret

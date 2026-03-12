@@ -32,8 +32,6 @@ typedef struct PCB {
 extern PCB PCBs[MAX_PROCS];
 extern PCB *current_proc;
 
-// ---- Functions implemented elsewhere (stubs for now) ----
-
 void init_proc(void);
 
 // Allocate nr_page contiguous physical pages
@@ -50,6 +48,9 @@ Context *ucontext(AddrSpace *as, Area kstack, void (*entry)(void));
 
 // Create a kernel-mode Context on the given kernel stack
 Context *kcontext(Area kstack, void (*entry)(void *), void *arg);
+
+// save prev context, switch to next process, return its context
+Context *schedule(Context *prev);
 
 // Loader functions
 void naive_uload(PCB *pcb, const char *filename);

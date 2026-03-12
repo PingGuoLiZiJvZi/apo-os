@@ -4,57 +4,38 @@
 
 extern void trap();
 extern void syscall_handler(Context *c);
-
-void *get_satp() {
-    uint64_t satp;
-    asm volatile("csrr %0, satp" : "=r"(satp));
-    return (void *)satp;
-}
-
-void set_satp(void *pdir) {
-    uint64_t satp = (uint64_t)pdir;
-    asm volatile("csrw satp, %0" : : "r"(satp));
-}
-
-void clint_handler(Context *c) {
-    c;
-    timer_set_next();
-    /* TODO: schedule / context switch here */
-}
-
-void plic_handler(Context *c) {
-    c;
-    int irq = plic_claim();
-    if (irq == UART0_IRQ) {
-        int ch = uart_getchar();
-        if (ch >= 0) {
-            printf("[UART RX] %c\n", (char)ch);
-        }
-    }
-    if (irq > 0) {
-        plic_complete(irq);
-    }
-}
+extern Context *schedule(Context *prev);
 
 Context *trap_handle(Context *c) {
-    c->pdir = get_satp();
-
     switch (c->scause) {
-        case YIELD:
+        case ECALL_U:
+        case ECALL_S:
+            // ecall: advance sepc past the ecall instruction
+            c->sepc += 4;
             syscall_handler(c);
-            break;
+            return schedule(c);
         case IRQ_TIMER:
-            clint_handler(c);
-            break;
+            timer_set_next();
+            return schedule(c);
         case IRQ_UART:
-            plic_handler(c);
+        {
+            int irq = plic_claim();
+            if (irq == UART0_IRQ) {
+                int ch = uart_getchar();
+                if (ch >= 0) {
+                    printf("[UART RX] %c\n", (char)ch);
+                }
+            }
+            if (irq > 0) {
+                plic_complete(irq);
+            }
             break;
+        }
         default:
             printf("Unhandled trap: scause=0x%lx, sepc=0x%lx\n",
                    c->scause, c->sepc);
             break;
     }
 
-    set_satp(c->pdir);
     return c;
 }

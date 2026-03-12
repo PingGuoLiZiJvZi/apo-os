@@ -7,10 +7,24 @@
 #include "../disk/disk.h"
 #include "../fs/fs.h"
 #include "../proc/proc.h"
+#include "../system/syscall.h"
 
-void syscall_handler(Context *c) { (void)c; /* TODO */ }
-
-
+void syscall_handler(Context *c) {
+    int syscall_id = c->GPR1;  // a7 = syscall number
+    switch (syscall_id) {
+        case SYS_yield:
+            // Just return — the next timer interrupt will schedule
+            break;
+        case SYS_exit:
+            printf("[syscall] exit(%ld)\n", c->GPR2);
+            shutdown();
+            break;
+        default:
+            printf("[syscall] unhandled syscall id=%d\n", syscall_id);
+            c->GPRx = -1;
+            break;
+    }
+}
 
 void main(unsigned long hartid, const void *dtb)
 {
@@ -25,7 +39,5 @@ void main(unsigned long hartid, const void *dtb)
     init_fs();// initial filesystem
     fs_test();
 
-    init_proc();
-
-    shutdown();
+    init_proc(); // creates kernel threads and directly switches — does not return
 }
