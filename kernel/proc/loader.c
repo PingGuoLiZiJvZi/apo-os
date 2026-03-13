@@ -110,43 +110,56 @@ void context_uload(PCB *pcb, char *filename, const char *argv[], const char *env
     for (int i = 0; i < envc; i++)
         str_size += strlen(envp[i]) + 1;
 
-    // Allocate 8 pages for user stack
-    char *stack_pages = (char *)new_page(8);
+    // Total size needed for argc + argv[] + envp[] + strings on stack
+    size_t args_total = sizeof(int)
+                      + (argc + 1 + envc + 1) * sizeof(char *)
+                      + str_size;
+    if (args_total > PGSIZE)
+        panic("context_uload: argc/argv/envp total size exceeds one page");
+
+    // Allocate 8 pages for user stack (one at a time, no contiguity needed)
+    void *stack_phys[8];
     uintptr_t v_stack_bottom = (uintptr_t)pcb->as.end;
     uintptr_t v_stack_top    = v_stack_bottom - 8 * PGSIZE;
-    uintptr_t p_stack_top    = (uintptr_t)stack_pages;
-    uintptr_t p_stack_bottom = p_stack_top + 8 * PGSIZE;
-    uintptr_t offset_v2p     = p_stack_bottom - v_stack_bottom;
 
-    // Map stack pages
     assert(v_stack_bottom % PGSIZE == 0);
     for (int i = 0; i < 8; i++) {
+        stack_phys[i] = new_page(1);
         map(&pcb->as,
             (void *)(v_stack_top + i * PGSIZE),
-            (void *)(p_stack_top + i * PGSIZE), 0);
+            stack_phys[i], 0);
     }
 
-    // Build argc/argv/envp on physical stack pages
-    char *sp = stack_pages + 8 * PGSIZE;
-    sp -= (sizeof(int) + (argc + 2 + envc) * sizeof(char *));
-    sp -= str_size;
-    uintptr_t gprx = (uintptr_t)sp;
+    // Build argc/argv/envp on the last physical page
+    // (stack grows downward from v_stack_bottom, so args land in page 7)
+    char *last_page = (char *)stack_phys[7];
+    char *sp = last_page + PGSIZE - args_total;
+
+    // Corresponding user virtual address of sp
+    uintptr_t v_sp = v_stack_bottom - args_total;
 
     *(int *)sp = argc;
-    char *strpos = sp + sizeof(int) + (argc + 2 + envc) * sizeof(char *);
     char *arg_area = sp + sizeof(int);
+    char *strpos   = arg_area + (argc + 1 + envc + 1) * sizeof(char *);
+    // Virtual address tracking for string pointers stored in argv/envp
+    uintptr_t v_strpos = v_sp + sizeof(int)
+                       + (argc + 1 + envc + 1) * sizeof(char *);
 
     for (int i = 0; i < argc; i++) {
-        *(char **)(arg_area + i * sizeof(char *)) = strpos;
+        *(char **)(arg_area + i * sizeof(char *)) = (char *)v_strpos;
         strcpy(strpos, argv[i]);
-        strpos += strlen(argv[i]) + 1;
+        size_t len = strlen(argv[i]) + 1;
+        strpos   += len;
+        v_strpos += len;
     }
     *(char **)(arg_area + argc * sizeof(char *)) = 0;
 
     for (int i = 0; i < envc; i++) {
-        *(char **)(arg_area + (argc + 1 + i) * sizeof(char *)) = strpos;
+        *(char **)(arg_area + (argc + 1 + i) * sizeof(char *)) = (char *)v_strpos;
         strcpy(strpos, envp[i]);
-        strpos += strlen(envp[i]) + 1;
+        size_t len = strlen(envp[i]) + 1;
+        strpos   += len;
+        v_strpos += len;
     }
     *(char **)(arg_area + (argc + 1 + envc) * sizeof(char *)) = 0;
 
@@ -158,11 +171,11 @@ void context_uload(PCB *pcb, char *filename, const char *argv[], const char *env
     Context *ctx = ucontext(&pcb->as,
         (Area){pcb->stack, pcb->stack + sizeof(pcb->stack)},
         (void (*)(void))entry);
-    ctx->GPRx = gprx - offset_v2p;  // user SP (virtual)
+    ctx->GPRx = v_sp;  // user SP (virtual)
     pcb->cp = ctx;
 
     printf("loader: User context at %p, SP(virt)=%p\n",
-           (void *)ctx, (void *)(gprx - offset_v2p));
+           (void *)ctx, (void *)v_sp);
 }
 
 // Create a kernel-mode context with the given entry function and argument.

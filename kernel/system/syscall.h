@@ -1,6 +1,10 @@
 #ifndef __SYSCALL_H__
 #define __SYSCALL_H__
 
+#include "../proc/proc.h"
+#include "../memory/memory.h"
+#include "../libc/stdio.h"
+Context* syscall_handler(Context *c) ;
 enum {
     SYS_exit = 0,
     SYS_yield = 1,

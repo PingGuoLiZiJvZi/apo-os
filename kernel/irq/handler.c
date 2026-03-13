@@ -3,7 +3,7 @@
 #include "../libc/stdio.h"
 
 extern void trap();
-extern void syscall_handler(Context *c);
+extern Context *syscall_handler(Context *c);
 extern Context *schedule(Context *prev);
 
 Context *trap_handle(Context *c) {
@@ -12,8 +12,7 @@ Context *trap_handle(Context *c) {
         case ECALL_S:
             // ecall: advance sepc past the ecall instruction
             c->sepc += 4;
-            syscall_handler(c);
-            return schedule(c);
+            return syscall_handler(c);
         case IRQ_TIMER:
             timer_set_next();
             return schedule(c);
@@ -23,7 +22,7 @@ Context *trap_handle(Context *c) {
             if (irq == UART0_IRQ) {
                 int ch = uart_getchar();
                 if (ch >= 0) {
-                    printf("[UART RX] %c\n", (char)ch);
+                    printf("UART RX: %c\n", (char)ch);
                 }
             }
             if (irq > 0) {

@@ -10,10 +10,6 @@ PCB *current_proc = 0;
 
 
 void *new_page(size_t nr_page) {
-    // Allocate nr_page contiguous physical pages using kalloc.
-    // kalloc returns one page at a time; we allocate them sequentially.
-    // Because the free list is LIFO and pages were freed in order,
-    // consecutive kalloc calls often return contiguous pages.
     void *first = 0;
     for (size_t i = 0; i < nr_page; i++) {
         void *p = kalloc();
@@ -25,9 +21,10 @@ void *new_page(size_t nr_page) {
 }
 
 void map(AddrSpace *as, void *vaddr, void *paddr, int flags) {
-    // Map a single page: vaddr -> paddr with flags
+    // Always grant full user-mode access for user address space mappings
+    uint64_t perm = PTE_U | PTE_R | PTE_W | PTE_X | (uint64_t)flags;
     if (map_pages(as->pgtable, (uint64_t)vaddr, (uint64_t)paddr,
-                  PAGE_SIZE, flags) != 0) {
+                  PAGE_SIZE, perm) != 0) {
         panic("map: map_pages failed");
     }
 }
@@ -85,7 +82,9 @@ Context *ucontext(AddrSpace *as, Area kstack, void (*entry)(void)) {
 // Scheduler
 
 Context *schedule(Context *prev) {
-    current_proc->cp = prev;
+    // Only save context if the process hasn't exited
+    if (current_proc->cp != 0)
+        current_proc->cp = prev;
 
     int cur_idx = -1;
     if (current_proc >= &PCBs[0] && current_proc < &PCBs[MAX_PROCS]) {
@@ -95,6 +94,8 @@ Context *schedule(Context *prev) {
     for (int i = 0; i < MAX_PROCS; i++) {
         int idx = (cur_idx + 1 + i) % MAX_PROCS;
         if (PCBs[idx].cp != 0) {
+            printf("schedule: switching to PCBs[%d] cp=%p sepc=0x%lx\n",
+                   idx, (void *)PCBs[idx].cp, PCBs[idx].cp->sepc);
             current_proc = &PCBs[idx];
             return current_proc->cp;
         }
@@ -104,33 +105,108 @@ Context *schedule(Context *prev) {
     return 0;  // unreachable
 }
 
-// Test kernel thread
+// Recursively free all physical pages and page table pages at levels 0-1.
+static void freewalk_level(uint64_t *pagetable, int level) {
+    for (int i = 0; i < 512; i++) {
+        uint64_t pte = pagetable[i];
+        if (!(pte & PTE_V)) continue;
 
-static void hello_fun(void *arg) {
-    int j = 1;
-    while (1) {
-        if (j % 500000 == 0)
-            printf("Hello from %s! count=%d\n", (char *)arg, j);
-        j++;
-        // Preempted by timer interrupt; no explicit yield needed
+        if (level > 0 && !(pte & (PTE_R | PTE_W | PTE_X))) {
+            freewalk_level((uint64_t *)PTE2PA(pte), level - 1);
+        } else {
+            kfree((void *)PTE2PA(pte));
+        }
+        pagetable[i] = 0;
     }
+    // Free this page table page itself
+    kfree(pagetable);
+}
+
+// Skips kernel entries at level 2 (they are shared copies from kernel_pagetable).
+static void free_user_pages(AddrSpace *as) {
+    uint64_t *pgtable = as->pgtable;
+
+    // Switch to kernel page table FIRST — we're about to destroy the user page table
+
+    asm volatile("csrw satp, %0" : : "r"(MAKE_SATP((uint64_t)kernel_pagetable)));
+    asm volatile("sfence.vma");
+
+    for (int i = 0; i < 512; i++) {
+        // Skip kernel entries (copied from kernel_pagetable in protect())
+        if (pgtable[i] == kernel_pagetable[i]) continue;
+        if (!(pgtable[i] & PTE_V)) continue;
+
+        // This is a user-created subtree, recurse and free
+        freewalk_level((uint64_t *)PTE2PA(pgtable[i]), 1);
+        pgtable[i] = 0;
+    }
+    // Free the root page table itself
+    kfree(pgtable);
+    as->pgtable = 0;
+}
+
+// Exit the current process: close fds, reclaim memory, mark as not runnable
+void sys_exit(int status) {
+    PCB *pcb = current_proc;
+    printf("sys_exit: closing fds...\n");
+    // Close all open file descriptors
+    for (int i = 0; i < MAX_FD; i++) {
+        if (pcb->fd_table[i]) {
+            fs_close(pcb->fd_table[i]);
+            pcb->fd_table[i] = 0;
+        }
+    }
+    printf("sys_exit: freeing user pages...\n");
+    // Reclaim all user-space physical pages and page tables
+    free_user_pages(&pcb->as);
+    printf("sys_exit: done, marking not runnable\n");
+    pcb->cp = 0;  // mark as not runnable
+}
+
+static void proc_init_stdio(PCB *pcb) {
+    File *serial = fs_open("/device/serial");
+    if (!serial) panic("proc_init_stdio: cannot open /device/serial");
+    pcb->fd_table[0] = serial;      // stdin
+
+    // Open two more references for stdout and stderr
+    File *serial1 = fs_open("/device/serial");
+    if (!serial1) panic("proc_init_stdio: cannot open /device/serial");
+    pcb->fd_table[1] = serial1;     // stdout
+
+    File *serial2 = fs_open("/device/serial");
+    if (!serial2) panic("proc_init_stdio: cannot open /device/serial");
+    pcb->fd_table[2] = serial2;     // stderr
 }
 
 void init_proc(void) {
     printf("Initializing process subsystem...\n");
     memset(PCBs, 0, sizeof(PCBs));
     memset(&boot_pcb, 0, sizeof(boot_pcb));
-    context_kload(&PCBs[0], hello_fun, (void *)"Thread-A");
-    context_kload(&PCBs[1], hello_fun, (void *)"Thread-B");
+
+    // Load 3 hello user processes
+    const char *argv0[] = {"hello-apple", 0};
+    const char *envp0[] = {0};
+    context_uload(&PCBs[0], "/bin/hello-apple", argv0, envp0);
+    proc_init_stdio(&PCBs[0]);
+
+    const char *argv1[] = {"hello-orange", 0};
+    const char *envp1[] = {0};
+    context_uload(&PCBs[1], "/bin/hello-orange", argv1, envp1);
+    proc_init_stdio(&PCBs[1]);
+
+    const char *argv2[] = {"hello-plum", 0};
+    const char *envp2[] = {0};
+    context_uload(&PCBs[2], "/bin/hello-plum", argv2, envp2);
+    proc_init_stdio(&PCBs[2]);
 
     // Set current to first process
     current_proc = &PCBs[0];
     Context *ctx = current_proc->cp;
 
-    printf("[proc] Switching to first process (sepc=0x%lx)...\n", ctx->sepc);
+    printf("Switching to first user process (sepc=0x%lx)...\n", ctx->sepc);
 
-    // Direct bootstrap: restore the context and sret into hello_fun.
-    // switch is defined in trap.S 
+    // Direct bootstrap: restore the context and sret into user entry.
+    // asm_switch is defined in trap.S 
     extern void asm_switch(Context *ctx) __attribute__((noreturn));
     asm_switch(ctx);
 }

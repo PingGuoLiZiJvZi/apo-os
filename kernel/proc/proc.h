@@ -7,6 +7,7 @@
 #define KSTACK_PAGENUM 8
 #define MAX_PROCS 8
 #define PGSIZE PAGE_SIZE
+#define MAX_FD 32
 
 #define ROUNDUP(a, sz) (((a) + (sz) - 1) & ~((sz) - 1))
 
@@ -15,6 +16,7 @@ typedef struct Area {
     void *start;
     void *end;
 } Area;
+
 
 typedef struct AddrSpace {
     void *start;  // user virtual address range start
@@ -27,6 +29,7 @@ typedef struct PCB {
     AddrSpace as;
     uintptr_t max_brk;
     char stack[KSTACK_PAGENUM * PAGE_SIZE];
+    File *fd_table[MAX_FD];
 } PCB;
 
 extern PCB PCBs[MAX_PROCS];
@@ -34,7 +37,7 @@ extern PCB *current_proc;
 
 void init_proc(void);
 
-// Allocate nr_page contiguous physical pages
+// Allocate nr_page physical pages
 void *new_page(size_t nr_page);
 
 // Map vaddr -> paddr in the address space's page table
@@ -51,6 +54,8 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg);
 
 // save prev context, switch to next process, return its context
 Context *schedule(Context *prev);
+// Exit the current process
+void sys_exit(int status);
 
 // Loader functions
 void naive_uload(PCB *pcb, const char *filename);

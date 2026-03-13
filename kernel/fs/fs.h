@@ -12,6 +12,7 @@
 #define FREE_FILE 0
 #define NORMAL_FILE 1
 #define DEVICE_FILE 2
+#define DIR_FILE 3
 #define NFILE 100
 #define BLOCK_SIZE 512
 #define ADDRS_PER_INODE 12

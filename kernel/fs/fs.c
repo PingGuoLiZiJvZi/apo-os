@@ -2,6 +2,7 @@
 #include "../disk/disk.h"
 #include "../libc/stdio.h"
 #include "../libc/string.h"
+#include "../device/device.h"
 #include "fs_helpers.h"
 #include "fs_readi.h"
 #include "fs_writei.h"
@@ -32,6 +33,7 @@ File* fs_open(const char *path){
     char name[DIRSIZ] = {0};
     uint32_t curr_inum = ROOT_INODE; 
     Inode curr_inode;
+    int is_device = 0;  // track if path goes through /device/
     
     // get the inode of root dir
     iget(curr_inum, &curr_inode);
@@ -43,6 +45,11 @@ File* fs_open(const char *path){
     while((path = skipelem(path, name)) != 0) {
         if(curr_inode.type != DIR_INODE) {
             return 0; // failed
+        }
+
+        // Check if we are entering the "device" directory
+        if (strcmp(name, "device") == 0 && curr_inum == ROOT_INODE) {
+            is_device = 1;
         }
         
         uint32_t next_inum = 0;
@@ -85,8 +92,18 @@ File* fs_open(const char *path){
     if(f == 0) return 0; // no free file slots
     f->ref = 1;
     f->inum = curr_inum;
-    f->type = curr_inode.type;
     f->off = 0;
+
+    // Convert inode type to file type
+    if (is_device && curr_inode.type == FILE_INODE) {
+        f->type = DEVICE_FILE;
+    } else if (curr_inode.type == FILE_INODE) {
+        f->type = NORMAL_FILE;
+    } else if (curr_inode.type == DIR_INODE) {
+        f->type = DIR_FILE;
+    } else {
+        f->type = FREE_FILE;
+    }
     
     // record the name
     for(int i = 0; i < DIRSIZ; i++) {
@@ -109,7 +126,20 @@ void fs_close(File *f){
 }
 
 int fs_read(File *f, void *buf, size_t n) {
-    if (f == 0 || (f->type != FILE_INODE && f->type != DIR_INODE)) {
+    if (f == 0) return -1;
+
+    // Device file: read from UART serial
+    if (f->type == DEVICE_FILE) {
+        char *p = (char *)buf;
+        for (size_t i = 0; i < n; i++) {
+            int ch = uart_getchar();
+            if (ch < 0) return (int)i;
+            p[i] = (char)ch;
+        }
+        return (int)n;
+    }
+
+    if (f->type != NORMAL_FILE && f->type != DIR_FILE) {
         return -1;
     }
 
@@ -126,7 +156,18 @@ int fs_read(File *f, void *buf, size_t n) {
 }
 
 int fs_write(File *f, void *buf, size_t n) {
-    if (f == 0 || (f->type != FILE_INODE && f->type != DIR_INODE)) {
+    if (f == 0) return -1;
+
+    // Device file: write to UART serial
+    if (f->type == DEVICE_FILE) {
+        const char *p = (const char *)buf;
+        for (size_t i = 0; i < n; i++) {
+            putchar(p[i]);
+        }
+        return (int)n;
+    }
+
+    if (f->type != NORMAL_FILE && f->type != DIR_FILE) {
         return -1;
     }
 
@@ -164,7 +205,7 @@ void fs_test() {
 
     //  Open root directory "/"
     File *root = fs_open("/");
-    if (root && root->type == DIR_INODE) {
+    if (root && root->type == DIR_FILE) {
         printf("[PASS] fs_open(\"/\") -> inum=%d type=%d\n", root->inum, root->type);
     } else {
         printf("[FAIL] fs_open(\"/\") returned NULL or wrong type\n");
@@ -174,7 +215,7 @@ void fs_test() {
 
     // Open subdirectory "/device"
     File *dev = fs_open("/device");
-    if (dev && dev->type == DIR_INODE) {
+    if (dev && dev->type == DIR_FILE) {
         printf("[PASS] fs_open(\"/device\") -> inum=%d\n", dev->inum);
     } else {
         printf("[FAIL] fs_open(\"/device\") failed\n");
@@ -183,7 +224,7 @@ void fs_test() {
 
     // Open file "/device/serial" and read its contents
     File *serial = fs_open("/device/serial");
-    if (serial && serial->type == FILE_INODE) {
+    if (serial && serial->type == DEVICE_FILE) {
         printf("[PASS] fs_open(\"/device/serial\") -> inum=%d\n", serial->inum);
     } else {
         printf("[FAIL] fs_open(\"/device/serial\") failed\n");

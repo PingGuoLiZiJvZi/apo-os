@@ -61,12 +61,21 @@ GDB_PORT ?= 1234
 MKFS_SRC := ../usr/mkfs.c
 MKFS_BIN := $(BUILD_DIR)/mkfs
 DISK_ROOT := ../usr/disk
+USR_DIR  := ../usr
+
+.PHONY: user-apps user-clean
+
+user-apps:
+	$(MAKE) -C $(USR_DIR) all
+
+user-clean:
+	$(MAKE) -C $(USR_DIR) clean
 
 $(MKFS_BIN): $(MKFS_SRC)
 	@mkdir -p $(dir $@)
 	gcc -Wall -O -o $@ $<
 
-$(DISK_IMG): $(MKFS_BIN) $(shell find $(DISK_ROOT) -type f -o -type d)
+$(DISK_IMG): $(MKFS_BIN) user-apps $(shell find $(DISK_ROOT) -type f -o -type d)
 	$(MKFS_BIN) $@ $(DISK_ROOT)
 
 run: $(KERNEL_BIN) $(DISK_IMG)
@@ -77,7 +86,7 @@ debug: $(KERNEL_BIN)
 	@echo "Connect with: gdb-multiarch $(KERNEL_ELF) -ex 'target remote :$(GDB_PORT)'"
 	$(QEMU) $(QEMU_ARGS) -nographic -S -gdb tcp::$(GDB_PORT)
 
-clean:
+clean: user-clean
 	rm -rf $(BUILD_DIR)
 
 -include $(DEPS)
