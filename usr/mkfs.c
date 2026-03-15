@@ -26,9 +26,12 @@
 #define BLOCK_SIZE      512
 #define ADDRS_PER_INODE 12
 #define DIRSIZ          28
-#define NDIRECT         11
+#define NDIRECT         10
 #define NINDIRECT       (BLOCK_SIZE / sizeof(uint32_t))  /* 128 */
-#define MAXFILE         (NDIRECT + NINDIRECT)             /* 139 */
+#define NDINDIRECT      (NINDIRECT * NINDIRECT)
+#define SINDIRECT_IDX   NDIRECT
+#define DINDIRECT_IDX   (NDIRECT + 1)
+#define MAXFILE         (NDIRECT + NINDIRECT + NDINDIRECT)
 
 /* ======== Disk geometry ======== */
 
@@ -143,7 +146,7 @@ static void iput(uint32_t inum, const Inode *ip) {
 
 /*
  * Append raw bytes to an inode's data.
- * Handles direct + singly-indirect blocks.
+ * Handles direct + singly-indirect + doubly-indirect blocks.
  */
 static void iappend(uint32_t inum, const void *data, uint32_t n) {
     Inode in;
@@ -160,17 +163,38 @@ static void iappend(uint32_t inum, const void *data, uint32_t n) {
             if (in.addrs[block_idx] == 0)
                 in.addrs[block_idx] = balloc();
             disk_block = in.addrs[block_idx];
-        } else if (block_idx < MAXFILE) {
-            /* Singly-indirect */
-            if (in.addrs[NDIRECT] == 0)
-                in.addrs[NDIRECT] = balloc(); /* allocate indirect table block */
+        } else if (block_idx < NDIRECT + NINDIRECT) {
+            if (in.addrs[SINDIRECT_IDX] == 0)
+                in.addrs[SINDIRECT_IDX] = balloc();
             uint32_t indirect_buf[NINDIRECT];
-            read_block(in.addrs[NDIRECT], indirect_buf);
+            read_block(in.addrs[SINDIRECT_IDX], indirect_buf);
             if (indirect_buf[block_idx - NDIRECT] == 0) {
                 indirect_buf[block_idx - NDIRECT] = balloc();
-                write_block(in.addrs[NDIRECT], indirect_buf);
+                write_block(in.addrs[SINDIRECT_IDX], indirect_buf);
             }
             disk_block = indirect_buf[block_idx - NDIRECT];
+        } else if (block_idx < MAXFILE) {
+            uint32_t doubly_idx = block_idx - NDIRECT - NINDIRECT;
+            uint32_t level1_idx = doubly_idx / NINDIRECT;
+            uint32_t level2_idx = doubly_idx % NINDIRECT;
+
+            if (in.addrs[DINDIRECT_IDX] == 0)
+                in.addrs[DINDIRECT_IDX] = balloc();
+
+            uint32_t dindirect_buf[NINDIRECT];
+            read_block(in.addrs[DINDIRECT_IDX], dindirect_buf);
+            if (dindirect_buf[level1_idx] == 0) {
+                dindirect_buf[level1_idx] = balloc();
+                write_block(in.addrs[DINDIRECT_IDX], dindirect_buf);
+            }
+
+            uint32_t indirect_buf[NINDIRECT];
+            read_block(dindirect_buf[level1_idx], indirect_buf);
+            if (indirect_buf[level2_idx] == 0) {
+                indirect_buf[level2_idx] = balloc();
+                write_block(dindirect_buf[level1_idx], indirect_buf);
+            }
+            disk_block = indirect_buf[level2_idx];
         } else {
             fprintf(stderr, "mkfs: file too large\n");
             exit(1);

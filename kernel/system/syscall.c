@@ -4,7 +4,7 @@
 #include "../fs/fs.h"
 #include "../libc/string.h"
 
-#define USER_COPY_CHUNK 512
+#define USER_COPY_CHUNK 4096
 #define MAX_PATH_LEN 256
 #define MAX_EXEC_ARGS 16
 #define MAX_EXEC_ARG_LEN 64

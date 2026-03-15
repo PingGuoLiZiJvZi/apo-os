@@ -28,7 +28,7 @@ OBJS   := $(S_OBJS) $(C_OBJS)
 
 DEPS := $(C_OBJS:.o=.d)
 
-.PHONY: all clean run disasm debug
+.PHONY: all clean run run-no-disk disasm debug
 
 all: $(KERNEL_BIN)
 
@@ -58,7 +58,9 @@ QEMU_COMMON := -machine virt -bios default -kernel $(KERNEL_BIN) \
 			   -device virtio-blk-device,drive=hd0 \
 			   -device virtio-gpu-device \
 			   -device virtio-keyboard-device \
-			   -device virtio-mouse-device
+			   -device virtio-tablet-device \
+			   -audiodev sdl,id=audio0 \
+			   -device virtio-sound-device,audiodev=audio0
 QEMU_ARGS := $(QEMU_COMMON)
 GDB_PORT ?= 1234
 
@@ -83,6 +85,10 @@ $(DISK_IMG): $(MKFS_BIN) user-apps $(shell find $(DISK_ROOT) -type f -o -type d)
 	$(MKFS_BIN) $@ $(DISK_ROOT)
 
 run: $(KERNEL_BIN) $(DISK_IMG)
+	$(QEMU) $(QEMU_COMMON) -display gtk,gl=off -serial mon:stdio
+
+run-no-disk: $(KERNEL_BIN)
+	@test -f $(DISK_IMG) || (echo "Missing $(DISK_IMG), please run 'make run' once to build disk image." && false)
 	$(QEMU) $(QEMU_COMMON) -display gtk,gl=off -serial mon:stdio
 
 

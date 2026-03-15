@@ -94,8 +94,8 @@ Context *schedule(Context *prev) {
     for (int i = 0; i < MAX_PROCS; i++) {
         int idx = (cur_idx + 1 + i) % MAX_PROCS;
         if (PCBs[idx].cp != 0) {
-            printf("schedule: switching to PCBs[%d] cp=%p sepc=0x%lx\n",
-                   idx, (void *)PCBs[idx].cp, PCBs[idx].cp->sepc);
+            // printf("schedule: switching to PCBs[%d] cp=%p sepc=0x%lx\n",
+            //        idx, (void *)PCBs[idx].cp, PCBs[idx].cp->sepc);
             current_proc = &PCBs[idx];
             return current_proc->cp;
         }
@@ -194,7 +194,7 @@ void init_proc(void) {
     // Load input smoke test + 2 hello user processes
     const char *argv0[] = {"input-smoke", 0};
     const char *envp0[] = {0};
-    context_uload(&PCBs[0], "/bin/input-smoke", argv0, envp0);
+    context_uload(&PCBs[0], "/bin/bird", argv0, envp0);
     proc_init_stdio(&PCBs[0]);
 
     const char *argv1[] = {"hello-orange", 0};

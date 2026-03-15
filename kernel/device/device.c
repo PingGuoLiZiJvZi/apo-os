@@ -1,6 +1,7 @@
 #include "device.h"
 #include "virtio_gpu.h"
 #include "virtio_input.h"
+#include "virtio_sound.h"
 #include "../libc/stdio.h"
 #include "../libc/string.h"
 #include "../main/sbi.h"
@@ -106,7 +107,7 @@ static int read_events_device(void *buf, size_t n) {
     if (ev.type == 1) {
         len = sprintf(out, "%s %u\n", ev.value ? "kd" : "ku", (unsigned)ev.code);
     } else {
-        len = sprintf(out, "m %u %u %u\n", (unsigned)ev.type, (unsigned)ev.code, (unsigned)ev.value);
+        len = sprintf(out, "m %u %u %d\n", (unsigned)ev.type, (unsigned)ev.code, (int32_t)ev.value);
     }
 
     if (len < 0) return 0;
@@ -151,19 +152,43 @@ int device_fs_read(const char *name, uint32_t *off, void *buf, size_t n) {
 int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) {
     if (!name || !buf) return -1;
 
+    if (strcmp(name, "audio") == 0) {
+        int w = virtio_sound_write(buf, n);
+        if (w > 0 && off) *off += (uint32_t)w;
+        return w;
+    }
+
     if (strcmp(name, "fb") == 0) {
         int w = 0, h = 0;
         if (virtio_gpu_resolution(&w, &h) < 0) return -1;
         if (w <= 0 || h <= 0) return -1;
         if ((n % 4) != 0 || !off) return -1;
 
+        const uint32_t *src = (const uint32_t *)buf;
         uint32_t px_off = *off / 4;
-        int x = (int)(px_off % (uint32_t)w);
-        int y = (int)(px_off / (uint32_t)w);
-        int px = (int)(n / 4);
-        if (virtio_gpu_fbdraw(x, y, px, 1, (const uint32_t *)buf, 1) < 0) return -1;
-        *off += (uint32_t)n;
-        return (int)n;
+        uint32_t total_px = (uint32_t)(n / 4);
+        uint32_t written_px = 0;
+
+        while (written_px < total_px) {
+            int x = (int)(px_off % (uint32_t)w);
+            int y = (int)(px_off / (uint32_t)w);
+            if (y >= h) break;
+
+            uint32_t row_left = (uint32_t)(w - x);
+            uint32_t remain = total_px - written_px;
+            uint32_t chunk_px = remain < row_left ? remain : row_left;
+
+            if (virtio_gpu_fbdraw(x, y, (int)chunk_px, 1, src + written_px, 1) < 0) {
+                return -1;
+            }
+
+            written_px += chunk_px;
+            px_off += chunk_px;
+        }
+
+        uint32_t written_bytes = written_px * 4;
+        *off += written_bytes;
+        return (int)written_bytes;
     }
 
     const char *p = (const char *)buf;
@@ -176,6 +201,7 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
 void device_poll() {
     virtio_input_poll();
     virtio_gpu_poll();
+    virtio_sound_poll();
 }
 
 int device_handle_irq(int irq) {
@@ -185,6 +211,10 @@ int device_handle_irq(int irq) {
     }
     if (virtio_gpu_match_irq(irq)) {
         virtio_gpu_handle_irq();
+        return 1;
+    }
+    if (virtio_sound_match_irq(irq)) {
+        virtio_sound_handle_irq();
         return 1;
     }
     return 0;
@@ -204,6 +234,7 @@ void init_device() {
 
     virtio_gpu_init();
     virtio_input_init();
+    virtio_sound_init();
 
     printf("All devices initialized.\n");
 }
