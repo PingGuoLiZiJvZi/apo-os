@@ -28,7 +28,7 @@ OBJS   := $(S_OBJS) $(C_OBJS)
 
 DEPS := $(C_OBJS:.o=.d)
 
-.PHONY: all clean run run-gui disasm debug
+.PHONY: all clean run disasm debug
 
 all: $(KERNEL_BIN)
 
@@ -53,9 +53,13 @@ disasm: $(KERNEL_ELF)
 
 QEMU := qemu-system-riscv64
 DISK_IMG := $(BUILD_DIR)/disk.img
-QEMU_ARGS := -machine virt -bios default -kernel $(KERNEL_BIN) \
-             -drive file=$(DISK_IMG),format=raw,id=hd0 \
-             -device virtio-blk-device,drive=hd0
+QEMU_COMMON := -machine virt -bios default -kernel $(KERNEL_BIN) \
+			   -drive file=$(DISK_IMG),format=raw,id=hd0 \
+			   -device virtio-blk-device,drive=hd0 \
+			   -device virtio-gpu-device \
+			   -device virtio-keyboard-device \
+			   -device virtio-mouse-device
+QEMU_ARGS := $(QEMU_COMMON)
 GDB_PORT ?= 1234
 
 MKFS_SRC := ../usr/mkfs.c
@@ -79,7 +83,8 @@ $(DISK_IMG): $(MKFS_BIN) user-apps $(shell find $(DISK_ROOT) -type f -o -type d)
 	$(MKFS_BIN) $@ $(DISK_ROOT)
 
 run: $(KERNEL_BIN) $(DISK_IMG)
-	$(QEMU) $(QEMU_ARGS) -nographic
+	$(QEMU) $(QEMU_COMMON) -display gtk,gl=off -serial mon:stdio
+
 
 debug: $(KERNEL_BIN)
 	@echo "Starting QEMU with GDB server on port $(GDB_PORT) (paused, waiting for GDB)..."

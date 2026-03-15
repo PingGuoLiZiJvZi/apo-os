@@ -8,5 +8,6 @@ void putchar(char c);
 void puts(const char *s);
 
 int printf(const char *fmt, ...);
+int sprintf(char *out, const char *fmt, ...);
 
 #endif /* __STDIO_H__ */

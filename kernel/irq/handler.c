@@ -24,6 +24,10 @@ Context *trap_handle(Context *c) {
                 if (ch >= 0) {
                     printf("UART RX: %c\n", (char)ch);
                 }
+            } else if (irq > 0) {
+                if (!device_handle_irq(irq)) {
+                    printf("Unhandled external irq=%d\n", irq);
+                }
             }
             if (irq > 0) {
                 plic_complete(irq);

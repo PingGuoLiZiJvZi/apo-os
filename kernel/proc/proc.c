@@ -145,6 +145,14 @@ static void free_user_pages(AddrSpace *as) {
     as->pgtable = 0;
 }
 
+void proc_exec_reclaim(PCB *pcb) {
+    if (pcb == 0) return;
+    if (pcb->as.pgtable != 0) {
+        free_user_pages(&pcb->as);
+    }
+    pcb->max_brk = 0;
+}
+
 // Exit the current process: close fds, reclaim memory, mark as not runnable
 void sys_exit(int status) {
     PCB *pcb = current_proc;
@@ -183,10 +191,10 @@ void init_proc(void) {
     memset(PCBs, 0, sizeof(PCBs));
     memset(&boot_pcb, 0, sizeof(boot_pcb));
 
-    // Load 3 hello user processes
-    const char *argv0[] = {"hello-apple", 0};
+    // Load input smoke test + 2 hello user processes
+    const char *argv0[] = {"input-smoke", 0};
     const char *envp0[] = {0};
-    context_uload(&PCBs[0], "/bin/hello-apple", argv0, envp0);
+    context_uload(&PCBs[0], "/bin/input-smoke", argv0, envp0);
     proc_init_stdio(&PCBs[0]);
 
     const char *argv1[] = {"hello-orange", 0};

@@ -56,6 +56,8 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg);
 Context *schedule(Context *prev);
 // Exit the current process
 void sys_exit(int status);
+// Reclaim current user address space for execve 
+void proc_exec_reclaim(PCB *pcb);
 
 // Loader functions
 void naive_uload(PCB *pcb, const char *filename);

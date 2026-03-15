@@ -22,7 +22,6 @@ void main(unsigned long hartid, const void *dtb)
     init_device();// initial device - UART, PLIC, CLINT
     init_disk();// initial disk
     init_fs();// initial filesystem
-    fs_test();
 
     init_proc(); // creates kernel threads and directly switches — does not return
 }

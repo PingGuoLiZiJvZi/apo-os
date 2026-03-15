@@ -15,9 +15,30 @@ void puts(const char *s)
 }
 
 
-static void print_dec(long val, int is_signed)
-{
-    char buf[21]; 
+typedef struct {
+    int to_buf;
+    char *buf;
+    int pos;
+} OutCtx;
+
+static void outc(OutCtx *ctx, char c) {
+    if (ctx->to_buf) {
+        ctx->buf[ctx->pos] = c;
+    } else {
+        putchar(c);
+    }
+    ctx->pos++;
+}
+
+static void outs(OutCtx *ctx, const char *s) {
+    if (!s) s = "(null)";
+    while (*s) {
+        outc(ctx, *s++);
+    }
+}
+
+static void out_dec(OutCtx *ctx, long val, int is_signed) {
+    char buf[21];
     int i = 0;
     int neg = 0;
     unsigned long uval;
@@ -30,7 +51,7 @@ static void print_dec(long val, int is_signed)
     }
 
     if (uval == 0) {
-        putchar('0');
+        outc(ctx, '0');
         return;
     }
 
@@ -39,21 +60,17 @@ static void print_dec(long val, int is_signed)
         uval /= 10;
     }
 
-    if (neg)
-        putchar('-');
-
-    while (i > 0)
-        putchar(buf[--i]);
+    if (neg) outc(ctx, '-');
+    while (i > 0) outc(ctx, buf[--i]);
 }
 
-static void print_hex(unsigned long val)
-{
+static void out_hex(OutCtx *ctx, unsigned long val) {
     static const char hex[] = "0123456789abcdef";
     char buf[17];
     int i = 0;
 
     if (val == 0) {
-        putchar('0');
+        outc(ctx, '0');
         return;
     }
 
@@ -62,94 +79,103 @@ static void print_hex(unsigned long val)
         val >>= 4;
     }
 
-    while (i > 0)
-        putchar(buf[--i]);
+    while (i > 0) outc(ctx, buf[--i]);
+}
+
+static int vformat(OutCtx *ctx, const char *fmt, va_list ap) {
+    while (*fmt) {
+        if (*fmt != '%') {
+            outc(ctx, *fmt++);
+            continue;
+        }
+
+        fmt++;
+        switch (*fmt) {
+        case 'l':
+            fmt++;
+            if (*fmt == 'x') {
+                unsigned long val = va_arg(ap, unsigned long);
+                out_hex(ctx, val);
+            } else if (*fmt == 'd') {
+                long val = va_arg(ap, long);
+                out_dec(ctx, val, 1);
+            } else if (*fmt == 'u') {
+                unsigned long val = va_arg(ap, unsigned long);
+                out_dec(ctx, (long)val, 0);
+            } else {
+                outc(ctx, '%');
+                outc(ctx, 'l');
+                outc(ctx, *fmt);
+            }
+            break;
+        case 'd': {
+            long val = va_arg(ap, int);
+            out_dec(ctx, val, 1);
+            break;
+        }
+        case 'u': {
+            unsigned long val = va_arg(ap, unsigned int);
+            out_dec(ctx, (long)val, 0);
+            break;
+        }
+        case 'x': {
+            unsigned long val = va_arg(ap, unsigned int);
+            out_hex(ctx, val);
+            break;
+        }
+        case 'p': {
+            unsigned long val = (unsigned long)va_arg(ap, void *);
+            outc(ctx, '0');
+            outc(ctx, 'x');
+            out_hex(ctx, val);
+            break;
+        }
+        case 's': {
+            const char *s = va_arg(ap, const char *);
+            outs(ctx, s);
+            break;
+        }
+        case 'c': {
+            char c = (char)va_arg(ap, int);
+            outc(ctx, c);
+            break;
+        }
+        case '%':
+            outc(ctx, '%');
+            break;
+        default:
+            outc(ctx, '%');
+            outc(ctx, *fmt);
+            break;
+        }
+        fmt++;
+    }
+    return ctx->pos;
 }
 
 
 int printf(const char *fmt, ...)
 {
     va_list ap;
-    int count = 0;
+    OutCtx ctx = {.to_buf = 0, .buf = 0, .pos = 0};
 
     va_start(ap, fmt);
-
-    while (*fmt) {
-        if (*fmt != '%') {
-            putchar(*fmt);
-            count++;
-            fmt++;
-            continue;
-        }
-
-        fmt++; /* skip '%' */
-
-        switch (*fmt) {
-        case 'l':
-            fmt++; // skip 'l'
-            if (*fmt == 'x') {
-                unsigned long val = va_arg(ap, unsigned long);
-                print_hex(val);
-            } else if (*fmt == 'd') {
-                long val = va_arg(ap, long);
-                print_dec(val, 1);
-            } else if (*fmt == 'u') {
-                unsigned long val = va_arg(ap, unsigned long);
-                print_dec((long)val, 0);
-            } else {
-                putchar('%');
-                putchar('l');
-                putchar(*fmt);
-                count += 3;
-            }
-            break;
-        case 'd': {
-            long val = va_arg(ap, int);
-            print_dec(val, 1);
-            break;
-        }
-        case 'u': {
-            unsigned long val = va_arg(ap, unsigned int);
-            print_dec((long)val, 0);
-            break;
-        }
-        case 'x': {
-            unsigned long val = va_arg(ap, unsigned int);
-            print_hex(val);
-            break;
-        }
-        case 'p': {
-            unsigned long val = (unsigned long)va_arg(ap, void *);
-            puts("0x");
-            print_hex(val);
-            break;
-        }
-        case 's': {
-            const char *s = va_arg(ap, const char *);
-            if (!s) s = "(null)";
-            puts(s);
-            break;
-        }
-        case 'c': {
-            char c = (char)va_arg(ap, int);
-            putchar(c);
-            count++;
-            break;
-        }
-        case '%':
-            putchar('%');
-            count++;
-            break;
-        default:
-            putchar('%');
-            putchar(*fmt);
-            count += 2;
-            break;
-        }
-
-        fmt++;
-    }
-
+    int count = vformat(&ctx, fmt, ap);
     va_end(ap);
+    return count;
+}
+
+int sprintf(char *out, const char *fmt, ...)
+{
+    if (!out || !fmt) return -1;
+
+    va_list ap;
+    OutCtx ctx = {.to_buf = 1, .buf = out, .pos = 0};
+
+    va_start(ap, fmt);
+    int count = vformat(&ctx, fmt, ap);
+    va_end(ap);
+
+    out[count] = '\0';
     return count;
 }

@@ -2,10 +2,13 @@
 #define __DEVICE_H__
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define UART0_BASE      0x10000000UL
 #define UART0_IRQ       10
 #define VIRTIO0_IRQ     1
+#define VIRTIO_IRQ_MIN  1
+#define VIRTIO_IRQ_MAX  8
 
 #define UART_RHR        0   // Receive Holding Register (read)  
 #define UART_THR        0   // Transmit Holding Register (write) 
@@ -45,6 +48,12 @@ void plic_complete(int irq);
 void timer_init();
 void timer_set_next();
 uint64_t timer_get_time();
+
+int device_fs_read(const char *name, uint32_t *off, void *buf, size_t n);
+int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n);
+
 void init_device();
+void device_poll();
+int device_handle_irq(int irq);
 
 #endif /* __DEVICE_H__ */

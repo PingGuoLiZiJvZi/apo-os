@@ -88,5 +88,4 @@ typedef struct {
 // int fs_readdir(File *dir, char *name, uint32_t *inum); 
 
 uint32_t balloc(void); // Allocate a zeroed disk block
-void fs_test();
 #endif
