@@ -35,9 +35,13 @@ Context *trap_handle(Context *c) {
             break;
         }
         default:
-            printf("Unhandled trap: scause=0x%lx, sepc=0x%lx\n",
-                   c->scause, c->sepc);
+         {
+             uint64_t stval = 0;
+             asm volatile("csrr %0, stval" : "=r"(stval));
+             printf("Unhandled trap: scause=0x%lx, sepc=0x%lx, stval=0x%lx, np=%lu\n",
+                 c->scause, c->sepc, stval, c->np);
             break;
+         }
     }
 
     return c;

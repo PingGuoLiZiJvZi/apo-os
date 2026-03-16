@@ -13,6 +13,7 @@
 #define NORMAL_FILE 1
 #define DEVICE_FILE 2
 #define DIR_FILE 3
+#define PIPE_FILE 4
 #define NFILE 100
 #define BLOCK_SIZE 512
 #define ADDRS_PER_INODE 12
@@ -63,12 +64,21 @@ typedef struct File{
     uint32_t inum;
     uint32_t off;
     uint16_t type;
+    int pipe_id;
+    uint8_t pipe_end;
     char name[DIRSIZ];
 } File;
 
 // Global file table 
 
 extern File file_table[NFILE];
+
+typedef struct {
+    uint32_t inum;       
+    uint16_t type;       
+    uint32_t size;       
+    uint16_t nlink;      
+} Stat;
 
 void init_fs();
 
@@ -78,16 +88,15 @@ int fs_read(File *f, void *buf, size_t n);
 int fs_write(File *f, void *buf, size_t n);
 int fs_seek(File *f, uint32_t off);
 uint32_t fs_filesize(File *f);
+File *fs_dup(File *f);
+int fs_pipe_create(File **read_end, File **write_end);
+int fs_stat_file(File *f, Stat *st);
+int fs_stat_path(const char *path, Stat *st);
+int fs_ioctl(File *f, uint64_t req, uint64_t arg);
+int fs_poll_file(File *f, int events);
 
 // File* fs_create(const char *path, uint16_t type);
 // int fs_unlink(const char *path);      
-
-typedef struct {
-    uint32_t inum;       
-    uint16_t type;       
-    uint32_t size;       
-    uint16_t nlink;      
-} Stat;
 
 // int fs_stat(File *f, Stat *st);   
 // int fs_readdir(File *dir, char *name, uint32_t *inum); 

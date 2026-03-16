@@ -6,10 +6,16 @@
 
 #define KSTACK_PAGENUM 8
 #define MAX_PROCS 8
+#define MAX_SUB_PROCS 4
 #define PGSIZE PAGE_SIZE
 #define MAX_FD 32
 
 #define ROUNDUP(a, sz) (((a) + (sz) - 1) & ~((sz) - 1))
+
+#define EMPTY_PROC 0
+#define RUNNING_PROC 1
+#define SLEEPING_PROC 2
+#define ZOMBIE_PROC 3
 
 // A contiguous memory region [start, end)
 typedef struct Area {
@@ -30,6 +36,11 @@ typedef struct PCB {
     uintptr_t max_brk;
     char stack[KSTACK_PAGENUM * PAGE_SIZE];
     File *fd_table[MAX_FD];
+    int sub_procs[MAX_SUB_PROCS]; 
+    int parent_pid;
+    int proc_state;
+    int exit_status;
+    uint64_t sleep_deadline;
 } PCB;
 // pid is the order in the PCBs array, i.e. &PCBs[pid] is the PCB for pid
 extern PCB PCBs[MAX_PROCS];
@@ -58,6 +69,12 @@ Context *schedule(Context *prev);
 void sys_exit(int status);
 // Reclaim current user address space for execve 
 void proc_exec_reclaim(PCB *pcb);
+
+// Process management helpers for syscalls
+int proc_fork_current(Context *parent_ctx);
+int proc_kill_pid(int pid, int sig);
+int proc_try_waitpid(int parent_pid, int target_pid, int *out_pid, int *out_status);
+void proc_sleep_current(uint64_t seconds);
 
 // Loader functions
 void naive_uload(PCB *pcb, const char *filename);

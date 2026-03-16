@@ -1,4 +1,5 @@
 #include "proc.h"
+#include "../device/device.h"
 #include "../libc/stdio.h"
 #include "../libc/string.h"
 #include "../memory/memory.h"
@@ -6,6 +7,71 @@
 PCB PCBs[MAX_PROCS];
 static PCB boot_pcb;  // boot PCB to hold init context
 PCB *current_proc = 0;
+
+#define TICKS_PER_SEC 10000000UL
+
+static inline int pid_from_pcb(const PCB *pcb) {
+    if (pcb < &PCBs[0] || pcb >= &PCBs[MAX_PROCS]) return -1;
+    return (int)(pcb - &PCBs[0]) + 1;
+}
+
+static inline PCB *pcb_from_pid(int pid) {
+    if (pid <= 0 || pid > MAX_PROCS) return 0;
+    return &PCBs[pid - 1];
+}
+
+static void reset_pcb_slot(PCB *pcb) {
+    pcb->cp = 0;
+    pcb->as.start = 0;
+    pcb->as.end = 0;
+    pcb->as.pgtable = 0;
+    pcb->max_brk = 0;
+    for (int i = 0; i < MAX_FD; i++) {
+        pcb->fd_table[i] = 0;
+    }
+    for (int i = 0; i < MAX_SUB_PROCS; i++) {
+        pcb->sub_procs[i] = -1;
+    }
+    pcb->parent_pid = -1;
+    pcb->proc_state = EMPTY_PROC;
+    pcb->exit_status = 0;
+    pcb->sleep_deadline = 0;
+}
+
+static int parent_has_child_pid(PCB *parent, int pid) {
+    if (!parent) return 0;
+    for (int i = 0; i < MAX_SUB_PROCS; i++) {
+        if (parent->sub_procs[i] == pid) return 1;
+    }
+    return 0;
+}
+
+static int add_child_pid(PCB *parent, int pid) {
+    for (int i = 0; i < MAX_SUB_PROCS; i++) {
+        if (parent->sub_procs[i] == -1) {
+            parent->sub_procs[i] = pid;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static void remove_child_pid(PCB *parent, int pid) {
+    if (!parent) return;
+    for (int i = 0; i < MAX_SUB_PROCS; i++) {
+        if (parent->sub_procs[i] == pid) {
+            parent->sub_procs[i] = -1;
+            return;
+        }
+    }
+}
+
+static int find_empty_proc_slot(void) {
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (PCBs[i].proc_state == EMPTY_PROC) return i;
+    }
+    return -1;
+}
 
 
 
@@ -82,9 +148,19 @@ Context *ucontext(AddrSpace *as, Area kstack, void (*entry)(void)) {
 // Scheduler
 
 Context *schedule(Context *prev) {
-    // Only save context if the process hasn't exited
+    // Save context unless this process has already become non-runnable.
     if (current_proc->cp != 0)
         current_proc->cp = prev;
+
+    uint64_t now = timer_get_time();
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (PCBs[i].proc_state == SLEEPING_PROC &&
+            PCBs[i].sleep_deadline != 0 &&
+            now >= PCBs[i].sleep_deadline) {
+            PCBs[i].sleep_deadline = 0;
+            PCBs[i].proc_state = RUNNING_PROC;
+        }
+    }
 
     int cur_idx = -1;
     if (current_proc >= &PCBs[0] && current_proc < &PCBs[MAX_PROCS]) {
@@ -93,7 +169,7 @@ Context *schedule(Context *prev) {
 
     for (int i = 0; i < MAX_PROCS; i++) {
         int idx = (cur_idx + 1 + i) % MAX_PROCS;
-        if (PCBs[idx].cp != 0) {
+        if (PCBs[idx].cp != 0 && PCBs[idx].proc_state == RUNNING_PROC) {
             // printf("schedule: switching to PCBs[%d] cp=%p sepc=0x%lx\n",
             //        idx, (void *)PCBs[idx].cp, PCBs[idx].cp->sepc);
             current_proc = &PCBs[idx];
@@ -153,22 +229,168 @@ void proc_exec_reclaim(PCB *pcb) {
     pcb->max_brk = 0;
 }
 
-// Exit the current process: close fds, reclaim memory, mark as not runnable
-void sys_exit(int status) {
-    PCB *pcb = current_proc;
-    printf("sys_exit: closing fds...\n");
-    // Close all open file descriptors
+static void terminate_proc(PCB *pcb, int status) {
+    if (pcb == 0 || pcb->proc_state == EMPTY_PROC || pcb->proc_state == ZOMBIE_PROC) {
+        return;
+    }
+
     for (int i = 0; i < MAX_FD; i++) {
         if (pcb->fd_table[i]) {
             fs_close(pcb->fd_table[i]);
             pcb->fd_table[i] = 0;
         }
     }
-    printf("sys_exit: freeing user pages...\n");
-    // Reclaim all user-space physical pages and page tables
-    free_user_pages(&pcb->as);
-    printf("sys_exit: done, marking not runnable\n");
-    pcb->cp = 0;  // mark as not runnable
+
+    if (pcb->as.pgtable != 0) {
+        free_user_pages(&pcb->as);
+    }
+
+    pcb->max_brk = 0;
+    pcb->sleep_deadline = 0;
+    pcb->cp = 0;
+    pcb->exit_status = status;
+    pcb->proc_state = ZOMBIE_PROC;
+
+    int self_pid = pid_from_pcb(pcb);
+    PCB *parent = pcb_from_pid(pcb->parent_pid);
+    if (!parent || !parent_has_child_pid(parent, self_pid)) {
+        reset_pcb_slot(pcb);
+    }
+}
+
+// Exit the current process: close fds, reclaim memory, mark as not runnable
+void sys_exit(int status) {
+    terminate_proc(current_proc, status);
+}
+
+static int clone_user_pages(PCB *parent, PCB *child) {
+    for (uintptr_t va = (uintptr_t)parent->as.start;
+         va < (uintptr_t)parent->as.end;
+         va += PAGE_SIZE) {
+        uint64_t *pte = walk(parent->as.pgtable, va, 0);
+        if (pte == 0) continue;
+        if (!(*pte & PTE_V)) continue;
+        if (!(*pte & (PTE_R | PTE_W | PTE_X))) continue;
+
+        uint64_t pa = PTE2PA(*pte);
+        void *newpa = new_page(1);
+        memcpy(newpa, (void *)pa, PAGE_SIZE);
+
+        uint64_t perm = *pte & (PTE_R | PTE_W | PTE_X | PTE_U);
+        if (map_pages(child->as.pgtable, va, (uint64_t)newpa, PAGE_SIZE, perm) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int proc_fork_current(Context *parent_ctx) {
+    PCB *parent = current_proc;
+    if (!parent || !parent_ctx) return -1;
+
+    int free_slot = find_empty_proc_slot();
+    if (free_slot < 0) return -1;
+
+    int parent_pid = pid_from_pcb(parent);
+    if (add_child_pid(parent, free_slot + 1) < 0) {
+        return -1;
+    }
+
+    PCB *child = &PCBs[free_slot];
+    memset(child, 0, sizeof(*child));
+    for (int i = 0; i < MAX_SUB_PROCS; i++) {
+        child->sub_procs[i] = -1;
+    }
+
+    protect(&child->as);
+    child->max_brk = parent->max_brk;
+    child->parent_pid = parent_pid;
+    child->proc_state = RUNNING_PROC;
+    child->exit_status = 0;
+    child->sleep_deadline = 0;
+
+    if (clone_user_pages(parent, child) < 0) {
+        proc_exec_reclaim(child);
+        reset_pcb_slot(child);
+        remove_child_pid(parent, free_slot + 1);
+        return -1;
+    }
+
+    memcpy(child->stack, parent->stack, sizeof(parent->stack));
+    intptr_t ctx_off = (intptr_t)((char *)parent_ctx - parent->stack);
+    if (ctx_off < 0 || ctx_off > (intptr_t)(sizeof(parent->stack) - sizeof(Context))) {
+        proc_exec_reclaim(child);
+        reset_pcb_slot(child);
+        remove_child_pid(parent, free_slot + 1);
+        return -1;
+    }
+
+    child->cp = (Context *)(child->stack + ctx_off);
+    child->cp->pdir = (void *)MAKE_SATP((uint64_t)child->as.pgtable);
+    child->cp->GPRx = 0;
+
+    for (int i = 0; i < MAX_FD; i++) {
+        if (parent->fd_table[i]) {
+            child->fd_table[i] = parent->fd_table[i];
+            child->fd_table[i]->ref++;
+        }
+    }
+
+    return free_slot + 1;
+}
+
+int proc_kill_pid(int pid, int sig) {
+    PCB *target = pcb_from_pid(pid);
+    if (!target) return -1;
+    if (target->proc_state == EMPTY_PROC || target->proc_state == ZOMBIE_PROC || target->cp == 0) {
+        return -1;
+    }
+
+    int status = 128 + (sig & 0x7f);
+    if (target == current_proc) {
+        terminate_proc(target, status);
+        return 1;
+    }
+
+    terminate_proc(target, status);
+    return 0;
+}
+
+int proc_try_waitpid(int parent_pid, int target_pid, int *out_pid, int *out_status) {
+    PCB *parent = pcb_from_pid(parent_pid);
+    if (!parent) return -1;
+
+    int has_match = 0;
+    for (int i = 0; i < MAX_SUB_PROCS; i++) {
+        int child_pid = parent->sub_procs[i];
+        if (child_pid <= 0) continue;
+        if (target_pid > 0 && child_pid != target_pid) continue;
+
+        has_match = 1;
+        PCB *child = pcb_from_pid(child_pid);
+        if (!child) {
+            parent->sub_procs[i] = -1;
+            continue;
+        }
+
+        if (child->proc_state == ZOMBIE_PROC) {
+            if (out_pid) *out_pid = child_pid;
+            if (out_status) *out_status = child->exit_status;
+            remove_child_pid(parent, child_pid);
+            reset_pcb_slot(child);
+            return 1;
+        }
+    }
+
+    return has_match ? 0 : -1;
+}
+
+void proc_sleep_current(uint64_t seconds) {
+    if (seconds == 0) return;
+    uint64_t now = timer_get_time();
+    uint64_t delta = seconds * TICKS_PER_SEC;
+    current_proc->sleep_deadline = now + delta;
+    current_proc->proc_state = SLEEPING_PROC;
 }
 
 static void proc_init_stdio(PCB *pcb) {
@@ -191,10 +413,14 @@ void init_proc(void) {
     memset(PCBs, 0, sizeof(PCBs));
     memset(&boot_pcb, 0, sizeof(boot_pcb));
 
+    for(int i = 0; i < MAX_PROCS; i++) {
+        reset_pcb_slot(&PCBs[i]);
+    }
+    
     // Load input smoke test + 2 hello user processes
-    const char *argv0[] = {"input-smoke", 0};
+    const char *argv0[] = {"syscall-extended-smoke", 0};
     const char *envp0[] = {0};
-    context_uload(&PCBs[0], "/bin/fceux", argv0, envp0);
+    context_uload(&PCBs[0], "/bin/syscall-extended-smoke", argv0, envp0);
     proc_init_stdio(&PCBs[0]);
 
     const char *argv1[] = {"hello-orange", 0};
@@ -202,9 +428,9 @@ void init_proc(void) {
     context_uload(&PCBs[1], "/bin/hello-orange", argv1, envp1);
     proc_init_stdio(&PCBs[1]);
 
-    const char *argv2[] = {"hello-plum", 0};
+    const char *argv2[] = {"hello-apple", 0};
     const char *envp2[] = {0};
-    context_uload(&PCBs[2], "/bin/hello-plum", argv2, envp2);
+    context_uload(&PCBs[2], "/bin/hello-apple", argv2, envp2);
     proc_init_stdio(&PCBs[2]);
 
     // Set current to first process

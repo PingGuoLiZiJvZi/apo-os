@@ -173,6 +173,7 @@ void context_uload(PCB *pcb, char *filename, const char *argv[], const char *env
         (void (*)(void))entry);
     ctx->GPRx = v_sp;  // user SP (virtual)
     pcb->cp = ctx;
+    pcb->proc_state = RUNNING_PROC;
 
     printf("loader: User context at %p, SP(virt)=%p\n",
            (void *)ctx, (void *)v_sp);
@@ -184,5 +185,6 @@ void context_kload(PCB *pcb, void (*entry)(void *), void *arg) {
         (Area){pcb->stack, pcb->stack + sizeof(pcb->stack)},
         entry, arg);
     pcb->cp = ctx;
+    pcb->proc_state = RUNNING_PROC;
     printf("loader: Kernel context at %p, entry=%p\n", (void *)ctx, (void *)entry);
 }

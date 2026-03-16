@@ -21,7 +21,17 @@ enum {
   SYS_unlink = 16,
   SYS_wait = 17,
   SYS_times = 18,
-  SYS_gettimeofday = 19
+  SYS_gettimeofday = 19,
+  SYS_sleep = 20,
+  SYS_stat = 21,
+  SYS_ioctl = 22,
+  SYS_pipe = 23,
+  SYS_dup = 24,
+  SYS_dup2 = 25,
+  SYS_poll = 26,
+  SYS_select = 27,
+  SYS_mmap = 28,
+  SYS_munmap = 29
 };
 
 #endif

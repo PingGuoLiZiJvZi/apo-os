@@ -4,8 +4,47 @@
 #include <assert.h>
 #include <time.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
+#include <sys/select.h>
 #include "syscall.h"
 #include <errno.h>
+
+typedef struct {
+	uint32_t inum;
+	uint16_t type;
+	uint32_t size;
+	uint16_t nlink;
+} KStatLite;
+
+typedef struct {
+	int fd;
+	short events;
+	short revents;
+} KPollFd;
+
+typedef struct {
+	uint64_t fds;
+	uint64_t nfds;
+	int timeout_ms;
+} KPollReq;
+
+typedef struct {
+	int nfds;
+	uint64_t readfds;
+	uint64_t writefds;
+	uint64_t exceptfds;
+	int timeout_ms;
+} KSelectReq;
+
+typedef struct {
+	uint64_t addr;
+	uint64_t len;
+	int prot;
+	int flags;
+	int fd;
+	uint64_t offset;
+} KMmapReq;
 // helper macros
 #define _concat(x, y) x##y
 #define concat(x, y) _concat(x, y)
@@ -53,7 +92,10 @@ intptr_t _syscall_(intptr_t type, intptr_t a0, intptr_t a1, intptr_t a2)
 	register intptr_t _gpr3 asm(GPR3) = a1;
 	register intptr_t _gpr4 asm(GPR4) = a2;
 	register intptr_t ret asm(GPRx);
-	asm volatile(SYSCALL : "=r"(ret) : "r"(_gpr1), "r"(_gpr2), "r"(_gpr3), "r"(_gpr4));
+	asm volatile(SYSCALL
+	             : "=r"(ret)
+	             : "r"(_gpr1), "r"(_gpr2), "r"(_gpr3), "r"(_gpr4)
+	             : "memory");
 	return ret;
 }
 
@@ -127,37 +169,64 @@ int _execve(const char *fname, char *const argv[], char *const envp[])
 
 int _fstat(int fd, struct stat *buf)
 {
-	return -1;
+	if (!buf)
+		return -1;
+
+	KStatLite st;
+	int ret = _syscall_(SYS_fstat, fd, (intptr_t)&st, 0);
+	if (ret < 0)
+		return -1;
+
+	memset(buf, 0, sizeof(*buf));
+	buf->st_ino = st.inum;
+	buf->st_nlink = st.nlink;
+	buf->st_size = st.size;
+	if (st.type == 1)
+		buf->st_mode = S_IFDIR | 0755;
+	else
+		buf->st_mode = S_IFREG | 0644;
+	return 0;
 }
 
 int _stat(const char *fname, struct stat *buf)
 {
-	assert(0);
-	return -1;
+	if (!fname || !buf)
+		return -1;
+
+	KStatLite st;
+	int ret = _syscall_(SYS_stat, (intptr_t)fname, (intptr_t)&st, 0);
+	if (ret < 0)
+		return -1;
+
+	memset(buf, 0, sizeof(*buf));
+	buf->st_ino = st.inum;
+	buf->st_nlink = st.nlink;
+	buf->st_size = st.size;
+	if (st.type == 1)
+		buf->st_mode = S_IFDIR | 0755;
+	else
+		buf->st_mode = S_IFREG | 0644;
+	return 0;
 }
 
 int _kill(int pid, int sig)
 {
-	_exit(-SYS_kill);
-	return -1;
+	return _syscall_(SYS_kill, pid, sig, 0);
 }
 
 pid_t _getpid()
 {
-	_exit(-SYS_getpid);
-	return 1;
+	return (pid_t)_syscall_(SYS_getpid, 0, 0, 0);
 }
 
 pid_t _fork()
 {
-	assert(0);
-	return -1;
+	return (pid_t)_syscall_(SYS_fork, 0, 0, 0);
 }
 
 pid_t vfork()
 {
-	assert(0);
-	return -1;
+	return _fork();
 }
 
 int _link(const char *d, const char *n)
@@ -174,8 +243,30 @@ int _unlink(const char *n)
 
 pid_t _wait(int *status)
 {
-	assert(0);
-	return -1;
+	for (;;)
+	{
+		int ret = _syscall_(SYS_wait, -1, (intptr_t)status, 0);
+		if (ret == -2)
+		{
+			_syscall_(SYS_yield, 0, 0, 0);
+			continue;
+		}
+		return (pid_t)ret;
+	}
+}
+
+pid_t waitpid(pid_t pid, int *status, int options)
+{
+	for (;;)
+	{
+		int ret = _syscall_(SYS_wait, pid, (intptr_t)status, options);
+		if (ret == -2)
+		{
+			_syscall_(SYS_yield, 0, 0, 0);
+			continue;
+		}
+		return (pid_t)ret;
+	}
 }
 
 clock_t _times(void *buf)
@@ -186,25 +277,83 @@ clock_t _times(void *buf)
 
 int pipe(int pipefd[2])
 {
-	assert(0);
-	return -1;
+	if (!pipefd)
+		return -1;
+	return _syscall_(SYS_pipe, (intptr_t)pipefd, 0, 0);
 }
 
 int dup(int oldfd)
 {
-	assert(0);
-	return -1;
+	return _syscall_(SYS_dup, oldfd, 0, 0);
 }
 
 int dup2(int oldfd, int newfd)
 {
-	return -1;
+	return _syscall_(SYS_dup2, oldfd, newfd, 0);
+}
+
+int _poll(void *fds, unsigned long nfds, int timeout)
+{
+	KPollReq req;
+	req.fds = (uint64_t)(uintptr_t)fds;
+	req.nfds = nfds;
+	req.timeout_ms = timeout;
+	return _syscall_(SYS_poll, (intptr_t)&req, 0, 0);
+}
+
+int poll(void *fds, unsigned long nfds, int timeout)
+{
+	return _poll(fds, nfds, timeout);
+}
+
+int _select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout)
+{
+	KSelectReq req;
+	req.nfds = nfds;
+	req.readfds = (uint64_t)(uintptr_t)readfds;
+	req.writefds = (uint64_t)(uintptr_t)writefds;
+	req.exceptfds = (uint64_t)(uintptr_t)exceptfds;
+	req.timeout_ms = -1;
+	if (timeout) {
+		req.timeout_ms = (int)(timeout->tv_sec * 1000 + timeout->tv_usec / 1000);
+	}
+	return _syscall_(SYS_select, (intptr_t)&req, 0, 0);
+}
+
+int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout)
+{
+	return _select(nfds, readfds, writefds, exceptfds, timeout);
+}
+
+void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
+{
+	KMmapReq req;
+	req.addr = (uint64_t)(uintptr_t)addr;
+	req.len = len;
+	req.prot = prot;
+	req.flags = flags;
+	req.fd = fd;
+	req.offset = (uint64_t)offset;
+	intptr_t ret = _syscall_(SYS_mmap, (intptr_t)&req, 0, 0);
+	if (ret < 0)
+		return (void *)-1;
+	return (void *)ret;
+}
+
+int munmap(void *addr, size_t len)
+{
+	return _syscall_(SYS_munmap, (intptr_t)addr, len, 0);
 }
 
 unsigned int sleep(unsigned int seconds)
 {
-	assert(0);
-	return -1;
+	if (seconds == 0)
+		return 0;
+
+	int ret = _syscall_(SYS_sleep, seconds, 0, 0);
+	if (ret < 0)
+		return seconds;
+	return 0;
 }
 
 ssize_t readlink(const char *pathname, char *buf, size_t bufsiz)
@@ -221,5 +370,9 @@ int symlink(const char *target, const char *linkpath)
 
 int ioctl(int fd, unsigned long request, ...)
 {
-	return -1;
+	va_list ap;
+	va_start(ap, request);
+	intptr_t arg = va_arg(ap, intptr_t);
+	va_end(ap);
+	return _syscall_(SYS_ioctl, fd, request, arg);
 }
