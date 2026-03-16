@@ -383,11 +383,11 @@ $(PAL_BIN): $(PAL_ELF)
 
 $(BUILD_DIR)/apps/fceux/%.o: $(FCEUX_REPO_DIR)/src/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -D__NAVY__ -DPSS_STYLE=1 -DFRAMESKIP -I$(FCEUX_INC) -c $< -o $@
+	$(CC) $(CFLAGS) -D__NAVY__ -D__PLATFORM_QEMU -DPSS_STYLE=1 -DFRAMESKIP -I$(FCEUX_INC) -c $< -o $@
 
 $(BUILD_DIR)/apps/fceux/%.o: $(FCEUX_REPO_DIR)/src/%.cpp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -D__NAVY__ -DPSS_STYLE=1 -DFRAMESKIP -I$(FCEUX_INC) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -D__NAVY__ -D__PLATFORM_QEMU -DPSS_STYLE=1 -DFRAMESKIP -I$(FCEUX_INC) -c $< -o $@
 
 $(FCEUX_ELF): $(FCEUX_OBJS) $(LIBOS_ARCHIVE) $(LIBAM_ARCHIVE) $(LIBMINISDL_ARCHIVE) $(LIBFIXEDPTC_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBC_ARCHIVE) $(LINKER_LD)
 	$(LD) -T $(LINKER_LD) -nostdlib \

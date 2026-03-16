@@ -20,7 +20,7 @@ enum {
     SYS_time = 11,
     SYS_signal = 12,
     SYS_execve = 13,
-    SYS_fork = 14,
+    SYS_fork = 14,// need to implement
     SYS_link = 15,
     SYS_unlink = 16,
     SYS_wait = 17,

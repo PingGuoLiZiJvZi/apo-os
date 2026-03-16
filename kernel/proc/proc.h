@@ -31,7 +31,7 @@ typedef struct PCB {
     char stack[KSTACK_PAGENUM * PAGE_SIZE];
     File *fd_table[MAX_FD];
 } PCB;
-
+// pid is the order in the PCBs array, i.e. &PCBs[pid] is the PCB for pid
 extern PCB PCBs[MAX_PROCS];
 extern PCB *current_proc;
 
