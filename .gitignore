@@ -2,3 +2,4 @@ build
 nanos-lite
 .vscode
 *log*
+usr/disk/bin

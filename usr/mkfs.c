@@ -26,29 +26,31 @@
 #define BLOCK_SIZE      512
 #define ADDRS_PER_INODE 12
 #define DIRSIZ          28
-#define NDIRECT         10
+#define NDIRECT         9
 #define NINDIRECT       (BLOCK_SIZE / sizeof(uint32_t))  /* 128 */
 #define NDINDIRECT      (NINDIRECT * NINDIRECT)
+#define NTINDIRECT      (NDINDIRECT * NINDIRECT)
 #define SINDIRECT_IDX   NDIRECT
 #define DINDIRECT_IDX   (NDIRECT + 1)
-#define MAXFILE         (NDIRECT + NINDIRECT + NDINDIRECT)
+#define TINDIRECT_IDX   (NDIRECT + 2)
+#define MAXFILE         (NDIRECT + NINDIRECT + NDINDIRECT + NTINDIRECT)
 
 /* ======== Disk geometry ======== */
 
-#define DISK_SIZE_MB    16
-#define NBLOCKS         (DISK_SIZE_MB * 1024 * 1024 / BLOCK_SIZE) /* 32768 */
+#define DISK_SIZE_MB    64
+#define NBLOCKS         (DISK_SIZE_MB * 1024 * 1024 / BLOCK_SIZE) /* 131072 */
 
 #define SB_BLOCK        1
 #define INODE_START     2
-/* 56 bytes per inode, 9 per block, 8 blocks → 72 inodes */
-#define NINODES         72
+/* 56 bytes per inode, 9 per block, 114 blocks → 1024 inodes */
+#define NINODES         1024
 #define IPB             (BLOCK_SIZE / sizeof(Inode))      /* 9 */
-#define INODE_BLOCKS    ((NINODES + IPB - 1) / IPB)       /* 8 */
-#define BMAP_START      (INODE_START + INODE_BLOCKS)       /* 10 */
+#define INODE_BLOCKS    ((NINODES + IPB - 1) / IPB)       /* 114 */
+#define BMAP_START      (INODE_START + INODE_BLOCKS)       /* 116 */
 /* Need ceil(NBLOCKS / BPB) bitmap blocks; BPB = BLOCK_SIZE*8 = 4096 */
 #define BPB             (BLOCK_SIZE * 8)
-#define BMAP_BLOCKS     ((NBLOCKS + BPB - 1) / BPB)       /* 8 */
-#define DATA_START      (BMAP_START + BMAP_BLOCKS)         /* 18 */
+#define BMAP_BLOCKS     ((NBLOCKS + BPB - 1) / BPB)       /* 32 */
+#define DATA_START      (BMAP_START + BMAP_BLOCKS)         /* 148 */
 
 /* ======== On-disk structures (packed to match kernel) ======== */
 
@@ -146,7 +148,7 @@ static void iput(uint32_t inum, const Inode *ip) {
 
 /*
  * Append raw bytes to an inode's data.
- * Handles direct + singly-indirect + doubly-indirect blocks.
+ * Handles direct + singly-indirect + doubly-indirect + triply-indirect blocks.
  */
 static void iappend(uint32_t inum, const void *data, uint32_t n) {
     Inode in;
@@ -173,7 +175,7 @@ static void iappend(uint32_t inum, const void *data, uint32_t n) {
                 write_block(in.addrs[SINDIRECT_IDX], indirect_buf);
             }
             disk_block = indirect_buf[block_idx - NDIRECT];
-        } else if (block_idx < MAXFILE) {
+        } else if (block_idx < NDIRECT + NINDIRECT + NDINDIRECT) {
             uint32_t doubly_idx = block_idx - NDIRECT - NINDIRECT;
             uint32_t level1_idx = doubly_idx / NINDIRECT;
             uint32_t level2_idx = doubly_idx % NINDIRECT;
@@ -195,6 +197,37 @@ static void iappend(uint32_t inum, const void *data, uint32_t n) {
                 write_block(dindirect_buf[level1_idx], indirect_buf);
             }
             disk_block = indirect_buf[level2_idx];
+        } else if (block_idx < MAXFILE) {
+            uint32_t triply_idx = block_idx - NDIRECT - NINDIRECT - NDINDIRECT;
+            uint32_t level1_idx = triply_idx / NDINDIRECT;
+            uint32_t rem = triply_idx % NDINDIRECT;
+            uint32_t level2_idx = rem / NINDIRECT;
+            uint32_t level3_idx = rem % NINDIRECT;
+
+            if (in.addrs[TINDIRECT_IDX] == 0)
+                in.addrs[TINDIRECT_IDX] = balloc();
+
+            uint32_t tindirect_buf[NINDIRECT];
+            read_block(in.addrs[TINDIRECT_IDX], tindirect_buf);
+            if (tindirect_buf[level1_idx] == 0) {
+                tindirect_buf[level1_idx] = balloc();
+                write_block(in.addrs[TINDIRECT_IDX], tindirect_buf);
+            }
+
+            uint32_t dindirect_buf[NINDIRECT];
+            read_block(tindirect_buf[level1_idx], dindirect_buf);
+            if (dindirect_buf[level2_idx] == 0) {
+                dindirect_buf[level2_idx] = balloc();
+                write_block(tindirect_buf[level1_idx], dindirect_buf);
+            }
+
+            uint32_t indirect_buf[NINDIRECT];
+            read_block(dindirect_buf[level2_idx], indirect_buf);
+            if (indirect_buf[level3_idx] == 0) {
+                indirect_buf[level3_idx] = balloc();
+                write_block(dindirect_buf[level2_idx], indirect_buf);
+            }
+            disk_block = indirect_buf[level3_idx];
         } else {
             fprintf(stderr, "mkfs: file too large\n");
             exit(1);
@@ -298,7 +331,8 @@ int main(int argc, char *argv[]) {
 
     printf("mkfs: creating %s from %s\n", img_path, root_path);
     printf("  BLOCK_SIZE=%d  NBLOCKS=%d  NINODES=%d\n", BLOCK_SIZE, NBLOCKS, NINODES);
-    printf("  inode_start=%d  bmap_start=%d  data_start=%d\n", INODE_START, BMAP_START, DATA_START);
+        printf("  inode_start=%u  bmap_start=%u  data_start=%u\n",
+            (unsigned)INODE_START, (unsigned)BMAP_START, (unsigned)DATA_START);
 
     /* Image is already zeroed (BSS) */
 
@@ -327,8 +361,8 @@ int main(int argc, char *argv[]) {
     populate_dir(root_inum, root_path);
 
     /* ---- 5. Write image to file ---- */
-    printf("  data blocks used: %u (of %u available)\n",
-           next_datablock - DATA_START, NBLOCKS - DATA_START);
+        printf("  data blocks used: %u (of %u available)\n",
+            (unsigned)(next_datablock - DATA_START), (unsigned)(NBLOCKS - DATA_START));
     printf("  inodes used: %u (of %u)\n", next_inum - 1, NINODES);
 
     FILE *fp = fopen(img_path, "wb");

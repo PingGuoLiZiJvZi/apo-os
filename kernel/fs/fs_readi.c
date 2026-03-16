@@ -6,6 +6,7 @@ int readi(Inode *ip, char *dst, uint32_t off, uint32_t n) {
     char temp_buf[BLOCK_SIZE];
     uint32_t indirect_buf[NINDIRECT];
     uint32_t dindirect_buf[NINDIRECT];
+    uint32_t tindirect_buf[NINDIRECT];
 
     if(off > ip->size || off + n < off)
         return 0;
@@ -23,7 +24,7 @@ int readi(Inode *ip, char *dst, uint32_t off, uint32_t n) {
             }
             disk_read(ip->addrs[SINDIRECT_IDX], (char*)indirect_buf);
             disk_block = indirect_buf[block_idx - NDIRECT];
-        } else if (block_idx < MAXFILE) {
+        } else if (block_idx < NDIRECT + NINDIRECT + NDINDIRECT) {
             if (ip->addrs[DINDIRECT_IDX] == 0) {
                 break;
             }
@@ -39,6 +40,29 @@ int readi(Inode *ip, char *dst, uint32_t off, uint32_t n) {
 
             disk_read(dindirect_buf[level1_idx], (char*)indirect_buf);
             disk_block = indirect_buf[level2_idx];
+        } else if (block_idx < MAXFILE) {
+            if (ip->addrs[TINDIRECT_IDX] == 0) {
+                break;
+            }
+
+            uint32_t triply_idx = block_idx - NDIRECT - NINDIRECT - NDINDIRECT;
+            uint32_t level1_idx = triply_idx / NDINDIRECT;
+            uint32_t rem = triply_idx % NDINDIRECT;
+            uint32_t level2_idx = rem / NINDIRECT;
+            uint32_t level3_idx = rem % NINDIRECT;
+
+            disk_read(ip->addrs[TINDIRECT_IDX], (char*)tindirect_buf);
+            if (tindirect_buf[level1_idx] == 0) {
+                break;
+            }
+
+            disk_read(tindirect_buf[level1_idx], (char*)dindirect_buf);
+            if (dindirect_buf[level2_idx] == 0) {
+                break;
+            }
+
+            disk_read(dindirect_buf[level2_idx], (char*)indirect_buf);
+            disk_block = indirect_buf[level3_idx];
         } else {
             panic("readi: file too large");
         }

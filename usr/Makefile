@@ -158,7 +158,7 @@ LIBSDLIMG_OBJS   := $(LIBSDLIMG_C_OBJS)
 # Apps: each subdirectory under apps/ with a .c file
 # ============================================================
 APP_DIRS := $(shell find $(APPS_DIR) -mindepth 1 -maxdepth 1 -type d)
-APP_NAMES := $(filter-out bird,$(notdir $(APP_DIRS)))
+APP_NAMES := $(filter-out bird pal fceux,$(notdir $(APP_DIRS)))
 APP_ELFS  := $(foreach name,$(APP_NAMES),$(BUILD_DIR)/apps/$(name)/$(name).elf)
 APP_BINS  := $(foreach name,$(APP_NAMES),$(DISK_BIN)/$(name))
 
@@ -169,6 +169,28 @@ BIRD_CPP_OBJS := $(patsubst $(BIRD_REPO_DIR)/src/%, $(BUILD_DIR)/apps/bird/%, $(
 BIRD_ELF      := $(BUILD_DIR)/apps/bird/bird.elf
 BIRD_BIN      := $(DISK_BIN)/bird
 
+PAL_REPO_DIR := $(APPS_DIR)/pal/repo
+PAL_INC      := $(PAL_REPO_DIR)/include
+PAL_C_SRCS   := $(shell find $(PAL_REPO_DIR)/src -name '*.c')
+PAL_CPP_SRCS := $(shell find $(PAL_REPO_DIR)/src -name '*.cpp')
+PAL_C_OBJS   := $(patsubst $(PAL_REPO_DIR)/src/%, $(BUILD_DIR)/apps/pal/%, $(PAL_C_SRCS:.c=.o))
+PAL_CPP_OBJS := $(patsubst $(PAL_REPO_DIR)/src/%, $(BUILD_DIR)/apps/pal/%, $(PAL_CPP_SRCS:.cpp=.o))
+PAL_OBJS     := $(PAL_C_OBJS) $(PAL_CPP_OBJS)
+PAL_ELF      := $(BUILD_DIR)/apps/pal/pal.elf
+PAL_BIN      := $(DISK_BIN)/pal
+PAL_DATA_SRC := $(PAL_REPO_DIR)/data
+PAL_DATA_DST := $(USR_DIR)/disk/share/games/pal
+
+FCEUX_REPO_DIR := $(APPS_DIR)/fceux/repo
+FCEUX_INC      := $(FCEUX_REPO_DIR)/src
+FCEUX_C_SRCS   := $(shell find $(FCEUX_REPO_DIR)/src -name '*.c')
+FCEUX_CPP_SRCS := $(shell find $(FCEUX_REPO_DIR)/src -name '*.cpp')
+FCEUX_C_OBJS   := $(patsubst $(FCEUX_REPO_DIR)/src/%, $(BUILD_DIR)/apps/fceux/%, $(FCEUX_C_SRCS:.c=.o))
+FCEUX_CPP_OBJS := $(patsubst $(FCEUX_REPO_DIR)/src/%, $(BUILD_DIR)/apps/fceux/%, $(FCEUX_CPP_SRCS:.cpp=.o))
+FCEUX_OBJS     := $(FCEUX_C_OBJS) $(FCEUX_CPP_OBJS)
+FCEUX_ELF      := $(BUILD_DIR)/apps/fceux/fceux.elf
+FCEUX_BIN      := $(DISK_BIN)/fceux
+
 # ============================================================
 # Targets
 # ============================================================
@@ -178,7 +200,7 @@ all: libs apps
 
 libs: $(LIBC_ARCHIVE) $(LIBOS_ARCHIVE) $(LIBAM_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBMINISDL_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBFIXEDPTC_ARCHIVE) $(LIBSDLIMG_ARCHIVE)
 
-apps: libs $(APP_BINS) $(BIRD_BIN)
+apps: libs $(APP_BINS) $(BIRD_BIN) $(PAL_BIN) $(FCEUX_BIN) pal-data
 
 # ---------- libc ----------
 
@@ -330,6 +352,65 @@ $(BIRD_BIN): $(BIRD_ELF)
 	@mkdir -p $(dir $@)
 	cp $< $@
 	@echo "  -> $@ (installed)"
+
+# ---------- pal ----------
+
+$(BUILD_DIR)/apps/pal/%.o: $(PAL_REPO_DIR)/src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -D__NAVY__ -I$(PAL_INC) -c $< -o $@
+
+$(BUILD_DIR)/apps/pal/%.o: $(PAL_REPO_DIR)/src/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -D__NAVY__ -I$(PAL_INC) -c $< -o $@
+
+$(PAL_ELF): $(PAL_OBJS) $(LIBOS_ARCHIVE) $(LIBAM_ARCHIVE) $(LIBMINISDL_ARCHIVE) $(LIBFIXEDPTC_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBC_ARCHIVE) $(LINKER_LD)
+	$(LD) -T $(LINKER_LD) -nostdlib \
+		$(LIBOS_BUILD)/crt0/start.o \
+		$(LIBOS_BUILD)/crt0/crt0.o \
+		$(PAL_OBJS) \
+		$(LIBOS_BUILD)/syscall.o \
+		$(LIBAM_ARCHIVE) \
+		--start-group $(LIBMINISDL_ARCHIVE) $(LIBFIXEDPTC_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBC_ARCHIVE) --end-group \
+		-o $@
+	@echo "  -> $@"
+
+$(PAL_BIN): $(PAL_ELF)
+	@mkdir -p $(dir $@)
+	cp $< $@
+	@echo "  -> $@ (installed)"
+
+# ---------- fceux ----------
+
+$(BUILD_DIR)/apps/fceux/%.o: $(FCEUX_REPO_DIR)/src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -D__NAVY__ -DPSS_STYLE=1 -DFRAMESKIP -I$(FCEUX_INC) -c $< -o $@
+
+$(BUILD_DIR)/apps/fceux/%.o: $(FCEUX_REPO_DIR)/src/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -D__NAVY__ -DPSS_STYLE=1 -DFRAMESKIP -I$(FCEUX_INC) -c $< -o $@
+
+$(FCEUX_ELF): $(FCEUX_OBJS) $(LIBOS_ARCHIVE) $(LIBAM_ARCHIVE) $(LIBMINISDL_ARCHIVE) $(LIBFIXEDPTC_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBC_ARCHIVE) $(LINKER_LD)
+	$(LD) -T $(LINKER_LD) -nostdlib \
+		$(LIBOS_BUILD)/crt0/start.o \
+		$(LIBOS_BUILD)/crt0/crt0.o \
+		$(FCEUX_OBJS) \
+		$(LIBOS_BUILD)/syscall.o \
+		$(LIBAM_ARCHIVE) \
+		--start-group $(LIBMINISDL_ARCHIVE) $(LIBFIXEDPTC_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBC_ARCHIVE) --end-group \
+		-o $@
+	@echo "  -> $@"
+
+$(FCEUX_BIN): $(FCEUX_ELF)
+	@mkdir -p $(dir $@)
+	cp $< $@
+	@echo "  -> $@ (installed)"
+
+.PHONY: pal-data
+pal-data:
+	@mkdir -p $(dir $(PAL_DATA_DST))
+	rm -rf $(PAL_DATA_DST)
+	cp -a $(PAL_DATA_SRC) $(PAL_DATA_DST)
+	@echo "  -> $(PAL_DATA_DST) (installed)"
 
 # ---------- clean ----------
 

@@ -10,6 +10,7 @@ int writei(Inode *ip, char *src, uint32_t off, uint32_t n, uint32_t inum) {
     char temp_buf[BLOCK_SIZE];
     uint32_t indirect_buf[NINDIRECT];
     uint32_t dindirect_buf[NINDIRECT];
+    uint32_t tindirect_buf[NINDIRECT];
 
     if(off > ip->size || off + n < off)
         return -1;
@@ -59,6 +60,36 @@ int writei(Inode *ip, char *src, uint32_t off, uint32_t n, uint32_t inum) {
                 disk_block = balloc();
                 indirect_buf[level2_idx] = disk_block;
                 disk_write(dindirect_buf[level1_idx], (char*)indirect_buf);
+            }
+        } else if (block_idx < MAXFILE) {
+            uint32_t triply_idx = block_idx - NDIRECT - NINDIRECT - NDINDIRECT;
+            uint32_t level1_idx = triply_idx / NDINDIRECT;
+            uint32_t rem = triply_idx % NDINDIRECT;
+            uint32_t level2_idx = rem / NINDIRECT;
+            uint32_t level3_idx = rem % NINDIRECT;
+
+            if (ip->addrs[TINDIRECT_IDX] == 0) {
+                ip->addrs[TINDIRECT_IDX] = balloc();
+            }
+
+            disk_read(ip->addrs[TINDIRECT_IDX], (char*)tindirect_buf);
+            if (tindirect_buf[level1_idx] == 0) {
+                tindirect_buf[level1_idx] = balloc();
+                disk_write(ip->addrs[TINDIRECT_IDX], (char*)tindirect_buf);
+            }
+
+            disk_read(tindirect_buf[level1_idx], (char*)dindirect_buf);
+            if (dindirect_buf[level2_idx] == 0) {
+                dindirect_buf[level2_idx] = balloc();
+                disk_write(tindirect_buf[level1_idx], (char*)dindirect_buf);
+            }
+
+            disk_read(dindirect_buf[level2_idx], (char*)indirect_buf);
+            disk_block = indirect_buf[level3_idx];
+            if (disk_block == 0) {
+                disk_block = balloc();
+                indirect_buf[level3_idx] = disk_block;
+                disk_write(dindirect_buf[level2_idx], (char*)indirect_buf);
             }
         } else {
             panic("writei: file too large");

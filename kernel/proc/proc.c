@@ -194,7 +194,7 @@ void init_proc(void) {
     // Load input smoke test + 2 hello user processes
     const char *argv0[] = {"input-smoke", 0};
     const char *envp0[] = {0};
-    context_uload(&PCBs[0], "/bin/bird", argv0, envp0);
+    context_uload(&PCBs[0], "/bin/fceux", argv0, envp0);
     proc_init_stdio(&PCBs[0]);
 
     const char *argv1[] = {"hello-orange", 0};
