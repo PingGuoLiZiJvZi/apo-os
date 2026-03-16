@@ -331,8 +331,7 @@ int proc_fork_current(Context *parent_ctx) {
 
     for (int i = 0; i < MAX_FD; i++) {
         if (parent->fd_table[i]) {
-            child->fd_table[i] = parent->fd_table[i];
-            child->fd_table[i]->ref++;
+            child->fd_table[i] = fs_dup(parent->fd_table[i]);
         }
     }
 
@@ -417,21 +416,13 @@ void init_proc(void) {
         reset_pcb_slot(&PCBs[i]);
     }
     
-    // Load input smoke test + 2 hello user processes
-    const char *argv0[] = {"syscall-extended-smoke", 0};
+    // M1 desktop bootstrap: run desktop as first process.
+    const char *argv0[] = {"desktop", 0};
     const char *envp0[] = {0};
-    context_uload(&PCBs[0], "/bin/syscall-extended-smoke", argv0, envp0);
+    context_uload(&PCBs[0], "/bin/desktop", argv0, envp0);
     proc_init_stdio(&PCBs[0]);
 
-    const char *argv1[] = {"hello-orange", 0};
-    const char *envp1[] = {0};
-    context_uload(&PCBs[1], "/bin/hello-orange", argv1, envp1);
-    proc_init_stdio(&PCBs[1]);
-
-    const char *argv2[] = {"hello-apple", 0};
-    const char *envp2[] = {0};
-    context_uload(&PCBs[2], "/bin/hello-apple", argv2, envp2);
-    proc_init_stdio(&PCBs[2]);
+    // Keep remaining slots empty in M1.
 
     // Set current to first process
     current_proc = &PCBs[0];

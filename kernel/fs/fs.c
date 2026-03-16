@@ -8,7 +8,7 @@
 #include "fs_writei.h"
 
 #define MAX_PIPES 16
-#define PIPE_BUF_SIZE 1024
+#define PIPE_BUF_SIZE 16384
 #define PIPE_END_READ 1
 #define PIPE_END_WRITE 2
 
@@ -290,6 +290,13 @@ uint32_t fs_filesize(File *f) {
 
 File *fs_dup(File *f) {
     if (!f) return 0;
+    if (f->type == PIPE_FILE && f->pipe_id >= 0 && f->pipe_id < MAX_PIPES) {
+        Pipe *p = &pipe_table[f->pipe_id];
+        if (p->used) {
+            if (f->pipe_end == PIPE_END_READ) p->readers++;
+            if (f->pipe_end == PIPE_END_WRITE) p->writers++;
+        }
+    }
     f->ref++;
     return f;
 }

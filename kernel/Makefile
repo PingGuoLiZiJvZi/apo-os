@@ -92,10 +92,10 @@ run-no-disk: $(KERNEL_BIN)
 	$(QEMU) $(QEMU_COMMON) -display gtk,gl=off -serial mon:stdio
 
 
-debug: $(KERNEL_BIN)
+debug: $(KERNEL_BIN) $(DISK_IMG)
 	@echo "Starting QEMU with GDB server on port $(GDB_PORT) (paused, waiting for GDB)..."
 	@echo "Connect with: gdb-multiarch $(KERNEL_ELF) -ex 'target remote :$(GDB_PORT)'"
-	$(QEMU) $(QEMU_ARGS) -nographic -S -gdb tcp::$(GDB_PORT)
+	$(QEMU) $(QEMU_COMMON) -display gtk,gl=off -serial mon:stdio -S -gdb tcp::$(GDB_PORT)
 
 clean: user-clean
 	rm -rf $(BUILD_DIR)
