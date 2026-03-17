@@ -110,8 +110,8 @@ void context_uload(PCB *pcb, char *filename, const char *argv[], const char *env
     for (int i = 0; i < envc; i++)
         str_size += strlen(envp[i]) + 1;
 
-    // Total size needed for argc + argv[] + envp[] + strings on stack
-    size_t args_total = sizeof(int)
+    // Total size needed for argc(uintptr_t) + argv[] + envp[] + strings on stack
+    size_t args_total = sizeof(uintptr_t)
                       + (argc + 1 + envc + 1) * sizeof(char *)
                       + str_size;
     if (args_total > PGSIZE)
@@ -134,15 +134,17 @@ void context_uload(PCB *pcb, char *filename, const char *argv[], const char *env
     // (stack grows downward from v_stack_bottom, so args land in page 7)
     char *last_page = (char *)stack_phys[7];
     char *sp = last_page + PGSIZE - args_total;
+    // Keep stack naturally aligned for uintptr_t/char*
+    sp = (char *)((uintptr_t)sp & ~(sizeof(uintptr_t) - 1));
 
     // Corresponding user virtual address of sp
-    uintptr_t v_sp = v_stack_bottom - args_total;
+    uintptr_t v_sp = v_stack_bottom - (uintptr_t)(last_page + PGSIZE - sp);
 
-    *(int *)sp = argc;
-    char *arg_area = sp + sizeof(int);
+    *(uintptr_t *)sp = (uintptr_t)argc;
+    char *arg_area = sp + sizeof(uintptr_t);
     char *strpos   = arg_area + (argc + 1 + envc + 1) * sizeof(char *);
     // Virtual address tracking for string pointers stored in argv/envp
-    uintptr_t v_strpos = v_sp + sizeof(int)
+    uintptr_t v_strpos = v_sp + sizeof(uintptr_t)
                        + (argc + 1 + envc + 1) * sizeof(char *);
 
     for (int i = 0; i < argc; i++) {

@@ -416,10 +416,11 @@ void init_proc(void) {
         reset_pcb_slot(&PCBs[i]);
     }
     
-    // M1 desktop bootstrap: run desktop as first process.
-    const char *argv0[] = {"desktop", 0};
+    // M2 menu bootstrap: run menu as first process.
+    // argv[1] can be changed to "--no-anim" to skip startup animation.
+    const char *argv0[] = {"menu", "anim", 0};
     const char *envp0[] = {0};
-    context_uload(&PCBs[0], "/bin/desktop", argv0, envp0);
+    context_uload(&PCBs[0], "/bin/menu", argv0, envp0);
     proc_init_stdio(&PCBs[0]);
 
     // Keep remaining slots empty in M1.

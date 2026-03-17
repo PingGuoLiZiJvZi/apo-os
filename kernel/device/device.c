@@ -100,20 +100,21 @@ void timer_init() {
 static int read_events_device(void *buf, size_t n) {
     VirtioInputEvent ev;
     if (!buf || n == 0) return 0;
-    if (!virtio_input_get_event(&ev)) return 0;
+    while (virtio_input_get_event(&ev)) {
+        if (ev.type != 1) {
+            continue;
+        }
 
-    char out[64];
-    int len;
-    if (ev.type == 1) {
-        len = sprintf(out, "%s %u\n", ev.value ? "kd" : "ku", (unsigned)ev.code);
-    } else {
-        len = sprintf(out, "m %u %u %d\n", (unsigned)ev.type, (unsigned)ev.code, (int32_t)ev.value);
+        char out[64];
+        int len = sprintf(out, "%s %u\n", ev.value ? "kd" : "ku", (unsigned)ev.code);
+
+        if (len < 0) return 0;
+        if ((size_t)len > n) len = (int)n;
+        memcpy(buf, out, (size_t)len);
+        return len;
     }
 
-    if (len < 0) return 0;
-    if ((size_t)len > n) len = (int)n;
-    memcpy(buf, out, (size_t)len);
-    return len;
+    return 0;
 }
 
 static int read_dispinfo_device(void *buf, size_t n) {
