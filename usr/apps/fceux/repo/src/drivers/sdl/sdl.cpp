@@ -88,6 +88,15 @@ CloseGame()
 
 void FCEUD_Update(uint8 *XBuf, int32 *Buffer, int Count);
 
+static void ThrottleFrameIfNeeded()
+{
+	if(!NoWaiting && (!(eoptions&EO_NOTHROTTLE) || FCEUI_EmulationPaused())) {
+		while (SpeedThrottle()) {
+			FCEUD_UpdateInput();
+		}
+	}
+}
+
 static void DoFun(int frameskip, int periodic_saves)
 {
 	uint8 *gfx;
@@ -152,6 +161,9 @@ FCEUD_Update(uint8 *XBuf,
 			 int Count)
 {
 	int ocount = Count;
+
+	ThrottleFrameIfNeeded();
+
 	if(Count) {
 		int32 can=GetWriteSound();
 		static int uflow=0;
@@ -199,9 +211,6 @@ FCEUD_Update(uint8 *XBuf,
 			}
 		}
 	} else {
-		if(!NoWaiting && (!(eoptions&EO_NOTHROTTLE) || FCEUI_EmulationPaused())) {
-      while (SpeedThrottle()) { FCEUD_UpdateInput(); }
-    }
 		if(XBuf && (inited&4)) {
 			BlitScreen(XBuf);
 		}
@@ -390,4 +399,3 @@ bool FCEUD_PauseAfterPlayback() { return false; }
 void FCEUD_TurboOn	(void) { NoWaiting|= 1; }
 void FCEUD_TurboOff   (void) { NoWaiting&=~1; }
 void FCEUD_TurboToggle(void) { NoWaiting^= 1; }
-

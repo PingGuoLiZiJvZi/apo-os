@@ -1,0 +1,5 @@
+type=exec
+path=/bin/files
+w=480
+l=320
+name=files

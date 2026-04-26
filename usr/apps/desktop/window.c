@@ -228,6 +228,7 @@ static Window *find_window_by_pcb_idx(int pcb_idx) {
 }
 
 uint8_t poll_dirty(int *layout_dirty, Rect *damage, int *damage_count) {
+    (void)layout_dirty;
     if (fbsyncdev < 0) return 0;
 
     FbSyncInfo info;
@@ -244,12 +245,7 @@ uint8_t poll_dirty(int *layout_dirty, Rect *damage, int *damage_count) {
 
         Window *w = find_window_by_pcb_idx(i);
         if (!w) continue;
-        Rect r = {dr->x, dr->y, dr->w, dr->h};
-        int changed = set_window_content_rect(w, r);
-        if (changed && layout_dirty) {
-            *layout_dirty = 1;
-        }
-        if (damage && damage_count && !changed) {
+        if (damage && damage_count) {
             Rect src_dirty = {dr->x, dr->y, dr->w, dr->h};
             Rect src_content = {w->src_x, w->src_y, w->cw, w->ch};
             Rect clipped_src;
