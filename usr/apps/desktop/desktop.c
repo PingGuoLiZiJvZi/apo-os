@@ -40,8 +40,9 @@ extern void sys_reboot(void);
 #define CURSOR_W       12
 #define CURSOR_H       18
 #define ABS_MAX        32767  /* virtio-tablet coordinate range */
-#define COMPOSITOR_FRAME_MS 33
+#define COMPOSITOR_FRAME_MS 16
 #define MAX_EVENT_BURST 64
+#define MAX_DAMAGE_RECTS 16
 
 /* Linux key codes */
 #define KEY_ESC   1
@@ -198,6 +199,67 @@ static void flush_cursor_damage(int old_x, int old_y) {
     }
 }
 
+static int rect_intersect(Rect a, Rect b, Rect *out) {
+    int x1 = a.x > b.x ? a.x : b.x;
+    int y1 = a.y > b.y ? a.y : b.y;
+    int x2 = a.x + a.w < b.x + b.w ? a.x + a.w : b.x + b.w;
+    int y2 = a.y + a.h < b.y + b.h ? a.y + a.h : b.y + b.h;
+    if (x1 >= x2 || y1 >= y2) return 0;
+    if (out) {
+        out->x = x1;
+        out->y = y1;
+        out->w = x2 - x1;
+        out->h = y2 - y1;
+    }
+    return 1;
+}
+
+static int rect_touch_or_overlap(Rect a, Rect b) {
+    return a.x <= b.x + b.w && a.x + a.w >= b.x &&
+           a.y <= b.y + b.h && a.y + a.h >= b.y;
+}
+
+static void rect_union_into(Rect *dst, Rect src) {
+    int x1 = dst->x < src.x ? dst->x : src.x;
+    int y1 = dst->y < src.y ? dst->y : src.y;
+    int x2 = dst->x + dst->w > src.x + src.w ? dst->x + dst->w : src.x + src.w;
+    int y2 = dst->y + dst->h > src.y + src.h ? dst->y + dst->h : src.y + src.h;
+    dst->x = x1;
+    dst->y = y1;
+    dst->w = x2 - x1;
+    dst->h = y2 - y1;
+}
+
+static void add_damage_rect(Rect *rects, int *count, Rect r) {
+    if (!rect_clip(&r)) return;
+    if (r.y >= screen_h - TASKBAR_H) return;
+    if (r.y + r.h > screen_h - TASKBAR_H) {
+        r.h = screen_h - TASKBAR_H - r.y;
+    }
+    if (r.w <= 0 || r.h <= 0) return;
+
+    for (int i = 0; i < *count; i++) {
+        if (!rect_touch_or_overlap(rects[i], r)) continue;
+        rect_union_into(&rects[i], r);
+        for (int j = 0; j < *count; j++) {
+            if (j == i || !rect_touch_or_overlap(rects[i], rects[j])) continue;
+            rect_union_into(&rects[i], rects[j]);
+            rects[j] = rects[*count - 1];
+            (*count)--;
+            j--;
+        }
+        return;
+    }
+
+    if (*count < MAX_DAMAGE_RECTS) {
+        rects[(*count)++] = r;
+        return;
+    }
+
+    rect_union_into(&rects[0], r);
+    *count = 1;
+}
+
 static int max_content_w(void) {
     int max_w = screen_w - 4;
     return max_w > 1 ? max_w : 1;
@@ -217,6 +279,20 @@ static void window_visible_content(const Window *w, int *out_w, int *out_h) {
     if (vis_h < 1) vis_h = 1;
     *out_w = vis_w;
     *out_h = vis_h;
+}
+
+static Rect window_total_rect(Window *w) {
+    int vis_w, vis_h;
+    window_visible_content(w, &vis_w, &vis_h);
+    Rect r = {w->x, w->y, vis_w + 4, vis_h + TITLEBAR_H + 4};
+    return r;
+}
+
+static Rect window_content_rect(Window *w) {
+    int vis_w, vis_h;
+    window_visible_content(w, &vis_w, &vis_h);
+    Rect r = {w->x + 2, w->y + 2 + TITLEBAR_H, vis_w, vis_h};
+    return r;
 }
 
 static int clip_source_rect(Rect *r) {
@@ -334,6 +410,33 @@ static void draw_char(int cx, int cy, char ch, uint32_t color) {
     }
 }
 
+static void draw_char_clipped(int cx, int cy, char ch, uint32_t color, Rect clip) {
+    int idx = (int)(unsigned char)ch;
+    if (idx < 0 || idx > 127) return;
+    const uint8_t *glyph = font5x7[idx];
+    for (int row = 0; row < 7; row++) {
+        uint8_t bits = glyph[row];
+        for (int col = 0; col < 5; col++) {
+            int x = cx + col;
+            int y = cy + row;
+            if (x < clip.x || x >= clip.x + clip.w ||
+                y < clip.y || y >= clip.y + clip.h) {
+                continue;
+            }
+            if (bits & (0x10 >> col)) {
+                fb_pixel(x, y, color);
+            }
+        }
+    }
+}
+
+static void fb_fill_rect_clipped(int x, int y, int w, int h, uint32_t c, Rect clip) {
+    Rect r = {x, y, w, h};
+    Rect clipped;
+    if (!rect_intersect(r, clip, &clipped)) return;
+    fb_fill_rect(clipped.x, clipped.y, clipped.w, clipped.h, c);
+}
+
 /* ---- Background ---- */
 
 static void draw_background(void) {
@@ -345,6 +448,22 @@ static void draw_background(void) {
         int b = 30 + t * 20 / 255;
         uint32_t c = (uint32_t)((r << 16) | (g << 8) | b);
         fb_fill_span(real_fb + y * screen_w, screen_w, c);
+    }
+}
+
+static void draw_background_rect(Rect r) {
+    if (!rect_clip(&r)) return;
+    if (r.y >= screen_h - TASKBAR_H) return;
+    if (r.y + r.h > screen_h - TASKBAR_H) {
+        r.h = screen_h - TASKBAR_H - r.y;
+    }
+    for (int y = r.y; y < r.y + r.h; y++) {
+        int t = y * 255 / (screen_h - TASKBAR_H);
+        int red = 18 + t * 12 / 255;
+        int green = 18 + t * 6 / 255;
+        int blue = 30 + t * 20 / 255;
+        uint32_t c = (uint32_t)((red << 16) | (green << 8) | blue);
+        fb_fill_span(real_fb + y * screen_w + r.x, r.w, c);
     }
 }
 
@@ -465,6 +584,78 @@ static void composite_window(Window *w) {
 
     for (int row = 0; row < copy_h; row++) {
         uint32_t *dst = real_fb + (dst_y + row) * screen_w + dst_x;
+        uint32_t *src = w->fb + (src_y + row) * screen_w + src_x;
+        memcpy(dst, src, (size_t)copy_w * sizeof(uint32_t));
+    }
+}
+
+static void draw_window_decoration_clipped(Window *w, Rect clip) {
+    if (!w->active) return;
+    if (!rect_intersect(window_total_rect(w), clip, NULL)) return;
+
+    int wx = w->x;
+    int wy = w->y;
+    int vis_w, vis_h;
+    window_visible_content(w, &vis_w, &vis_h);
+
+    int total_w = vis_w + 4;
+    int total_h = vis_h + TITLEBAR_H + 4;
+
+    uint32_t border = (w->pid == focus_pid) ? 0x006070a0 : 0x00505070;
+    uint32_t title_bg = (w->pid == focus_pid) ? 0x00486090 : 0x00354060;
+
+    fb_fill_rect_clipped(wx, wy, total_w, 2, border, clip);
+    fb_fill_rect_clipped(wx, wy + total_h - 2, total_w, 2, border, clip);
+    fb_fill_rect_clipped(wx, wy, 2, total_h, border, clip);
+    fb_fill_rect_clipped(wx + total_w - 2, wy, 2, total_h, border, clip);
+    fb_fill_rect_clipped(wx + 2, wy + 2, vis_w, TITLEBAR_H, title_bg, clip);
+
+    if (w->title) {
+        int tx = wx + 6;
+        int tty = wy + 2 + (TITLEBAR_H - 7) / 2;
+        for (int i = 0; w->title[i] && i < 20; i++) {
+            draw_char_clipped(tx, tty, w->title[i], 0x00d0d0e0, clip);
+            tx += 6;
+        }
+    }
+
+    int cbx = wx + 2 + vis_w - 16;
+    int cby = wy + 2 + (TITLEBAR_H - 7) / 2;
+    fb_fill_rect_clipped(cbx - 2, wy + 2, 18, TITLEBAR_H, 0x00804040, clip);
+    draw_char_clipped(cbx + 4, cby, 'X', 0x00ffffff, clip);
+}
+
+static void composite_window_clipped(Window *w, Rect clip) {
+    if (!w->active || !w->fb) return;
+
+    Rect dst_content = window_content_rect(w);
+    Rect desktop_area = {0, 0, screen_w, screen_h - TASKBAR_H};
+    Rect draw_rect;
+    if (!rect_intersect(dst_content, clip, &draw_rect)) return;
+    if (!rect_intersect(draw_rect, desktop_area, &draw_rect)) return;
+    if (!rect_clip(&draw_rect)) return;
+
+    int src_x = w->src_x + (draw_rect.x - dst_content.x);
+    int src_y = w->src_y + (draw_rect.y - dst_content.y);
+    int copy_w = draw_rect.w;
+    int copy_h = draw_rect.h;
+
+    if (src_x < 0) {
+        draw_rect.x += -src_x;
+        copy_w += src_x;
+        src_x = 0;
+    }
+    if (src_y < 0) {
+        draw_rect.y += -src_y;
+        copy_h += src_y;
+        src_y = 0;
+    }
+    if (src_x + copy_w > screen_w) copy_w = screen_w - src_x;
+    if (src_y + copy_h > screen_h) copy_h = screen_h - src_y;
+    if (copy_w <= 0 || copy_h <= 0) return;
+
+    for (int row = 0; row < copy_h; row++) {
+        uint32_t *dst = real_fb + (draw_rect.y + row) * screen_w + draw_rect.x;
         uint32_t *src = w->fb + (src_y + row) * screen_w + src_x;
         memcpy(dst, src, (size_t)copy_w * sizeof(uint32_t));
     }
@@ -782,7 +973,7 @@ static Window *find_window_by_pcb_idx(int pcb_idx) {
     return NULL;
 }
 
-static uint8_t poll_dirty(int *layout_dirty) {
+static uint8_t poll_dirty(int *layout_dirty, Rect *damage, int *damage_count) {
     if (fbsyncdev < 0) return 0;
 
     FbSyncInfo info;
@@ -800,8 +991,23 @@ static uint8_t poll_dirty(int *layout_dirty) {
         Window *w = find_window_by_pcb_idx(i);
         if (!w) continue;
         Rect r = {dr->x, dr->y, dr->w, dr->h};
-        if (set_window_content_rect(w, r) && layout_dirty) {
+        int changed = set_window_content_rect(w, r);
+        if (changed && layout_dirty) {
             *layout_dirty = 1;
+        }
+        if (damage && damage_count && !changed) {
+            Rect src_dirty = {dr->x, dr->y, dr->w, dr->h};
+            Rect src_content = {w->src_x, w->src_y, w->cw, w->ch};
+            Rect clipped_src;
+            if (rect_intersect(src_dirty, src_content, &clipped_src)) {
+                Rect dst = {
+                    w->x + 2 + (clipped_src.x - w->src_x),
+                    w->y + 2 + TITLEBAR_H + (clipped_src.y - w->src_y),
+                    clipped_src.w,
+                    clipped_src.h
+                };
+                add_damage_rect(damage, damage_count, dst);
+            }
         }
     }
     return info.mask;
@@ -823,6 +1029,50 @@ static void render_windows(void) {
         draw_window_decoration(w);
         composite_window(w);
     }
+}
+
+static void render_damage(Rect *damage, int damage_count) {
+    if (!damage || damage_count <= 0) return;
+
+    int had_cursor = cursor_drawn;
+    int old_cursor_x = cursor_saved_x;
+    int old_cursor_y = cursor_saved_y;
+    restore_cursor();
+
+    for (int d = 0; d < damage_count; d++) {
+        Rect clip = damage[d];
+        if (!rect_clip(&clip)) continue;
+        if (clip.y >= screen_h - TASKBAR_H) continue;
+        if (clip.y + clip.h > screen_h - TASKBAR_H) {
+            clip.h = screen_h - TASKBAR_H - clip.y;
+        }
+        if (clip.w <= 0 || clip.h <= 0) continue;
+
+        draw_background_rect(clip);
+
+        for (int i = 0; i < num_windows; i++) {
+            Window *w = &windows[i];
+            if (!w->active) continue;
+            if (!w->fb) {
+                mmap_child_fb(w->pcb_idx);
+            }
+            if (!rect_intersect(window_total_rect(w), clip, NULL)) continue;
+            draw_window_decoration_clipped(w, clip);
+            composite_window_clipped(w, clip);
+        }
+    }
+
+    present_cursor();
+
+    for (int d = 0; d < damage_count; d++) {
+        flush_rect(damage[d]);
+    }
+    if (had_cursor) {
+        Rect old_cursor = {old_cursor_x, old_cursor_y, CURSOR_W, CURSOR_H};
+        flush_rect(old_cursor);
+    }
+    Rect new_cursor = {mouse_x, mouse_y, CURSOR_W, CURSOR_H};
+    flush_rect(new_cursor);
 }
 
 static void render_frame(int full_redraw) {
@@ -899,6 +1149,8 @@ int main(int argc, char *argv[]) {
     int cursor_old_y = mouse_y;
     uint8_t pending_child_dirty = 0;
     uint32_t last_child_render_ms = 0;
+    Rect pending_damage[MAX_DAMAGE_RECTS];
+    int pending_damage_count = 0;
 
     while (1) {
         int got_event = 0;
@@ -1031,7 +1283,7 @@ int main(int argc, char *argv[]) {
 
         /* Check for child dirty flags */
         int layout_dirty = 0;
-        uint8_t dmask = poll_dirty(&layout_dirty);
+        uint8_t dmask = poll_dirty(&layout_dirty, pending_damage, &pending_damage_count);
         if (dmask) {
             pending_child_dirty |= dmask;
         }
@@ -1054,12 +1306,18 @@ int main(int argc, char *argv[]) {
             ui_dirty = 0;
             cursor_dirty = 0;
             pending_child_dirty = 0;
+            pending_damage_count = 0;
             last_child_render_ms = now_ms;
             rendered = 1;
         } else if (child_render_due) {
-            render_frame(0);
+            if (pending_damage_count > 0) {
+                render_damage(pending_damage, pending_damage_count);
+            } else {
+                render_frame(0);
+            }
             cursor_dirty = 0;
             pending_child_dirty = 0;
+            pending_damage_count = 0;
             last_child_render_ms = now_ms;
             rendered = 1;
         } else if (cursor_dirty) {
