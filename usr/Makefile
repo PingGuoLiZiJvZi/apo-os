@@ -158,9 +158,15 @@ LIBSDLIMG_OBJS   := $(LIBSDLIMG_C_OBJS)
 # Apps: each subdirectory under apps/ with a .c file
 # ============================================================
 APP_DIRS := $(shell find $(APPS_DIR) -mindepth 1 -maxdepth 1 -type d)
-APP_NAMES := $(filter-out bird pal fceux,$(notdir $(APP_DIRS)))
+APP_NAMES := $(filter-out bird pal fceux desktop,$(notdir $(APP_DIRS)))
 APP_ELFS  := $(foreach name,$(APP_NAMES),$(BUILD_DIR)/apps/$(name)/$(name).elf)
 APP_BINS  := $(foreach name,$(APP_NAMES),$(DISK_BIN)/$(name))
+
+DESKTOP_DIR  := $(APPS_DIR)/desktop
+DESKTOP_SRCS := $(wildcard $(DESKTOP_DIR)/*.c)
+DESKTOP_OBJS := $(patsubst $(DESKTOP_DIR)/%.c,$(BUILD_DIR)/apps/desktop/%.o,$(DESKTOP_SRCS))
+DESKTOP_ELF  := $(BUILD_DIR)/apps/desktop/desktop.elf
+DESKTOP_BIN  := $(DISK_BIN)/desktop
 
 BIRD_REPO_DIR := $(APPS_DIR)/bird/repo
 BIRD_INC      := $(BIRD_REPO_DIR)/include
@@ -200,7 +206,7 @@ all: libs apps
 
 libs: $(LIBC_ARCHIVE) $(LIBOS_ARCHIVE) $(LIBAM_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBMINISDL_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBFIXEDPTC_ARCHIVE) $(LIBSDLIMG_ARCHIVE)
 
-apps: libs $(APP_BINS) $(BIRD_BIN) $(PAL_BIN) $(FCEUX_BIN) pal-data
+apps: libs $(APP_BINS) $(DESKTOP_BIN) $(BIRD_BIN) $(PAL_BIN) $(FCEUX_BIN) pal-data
 
 # ---------- libc ----------
 
@@ -330,6 +336,28 @@ $(DISK_BIN)/$(1): $(BUILD_DIR)/apps/$(1)/$(1).elf
 endef
 
 $(foreach name,$(APP_NAMES),$(eval $(call BUILD_APP,$(name))))
+
+# ---------- desktop ----------
+
+$(BUILD_DIR)/apps/desktop/%.o: $(DESKTOP_DIR)/%.c $(wildcard $(DESKTOP_DIR)/*.h)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(DESKTOP_ELF): $(DESKTOP_OBJS) $(LIBOS_ARCHIVE) $(LIBAM_ARCHIVE) $(LIBMINISDL_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBC_ARCHIVE) $(LINKER_LD)
+	$(LD) -T $(LINKER_LD) -nostdlib \
+		$(LIBOS_BUILD)/crt0/start.o \
+		$(LIBOS_BUILD)/crt0/crt0.o \
+		$(DESKTOP_OBJS) \
+		$(LIBOS_BUILD)/syscall.o \
+		$(LIBAM_ARCHIVE) \
+		--start-group $(LIBMINISDL_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBC_ARCHIVE) --end-group \
+		-o $@
+	@echo "  -> $@"
+
+$(DESKTOP_BIN): $(DESKTOP_ELF)
+	@mkdir -p $(dir $@)
+	cp $< $@
+	@echo "  -> $@ (installed)"
 
 # ---------- bird (C++) ----------
 
