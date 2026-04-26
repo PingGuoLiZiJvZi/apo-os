@@ -3,6 +3,7 @@
 # ============================================================
 
 CROSS_COMPILE ?= riscv64-linux-gnu-
+HOST_CC ?= gcc
 CC      := $(CROSS_COMPILE)gcc
 CXX     := $(CROSS_COMPILE)g++
 AR      := $(CROSS_COMPILE)ar
@@ -17,6 +18,15 @@ APPS_DIR   := $(USR_DIR)/apps
 BUILD_DIR  := $(USR_DIR)/build
 DISK_BIN   := $(USR_DIR)/disk/bin
 LINKER_LD  := $(APPS_DIR)/user-linker.ld
+
+# Boot animation assets
+NYANPACK_SRC := $(USR_DIR)/nyanpack.c
+NYANPACK_BIN := $(BUILD_DIR)/nyanpack
+BOOT_DIR := $(USR_DIR)/disk/share/boot
+BOOT_NYAN_LOOP := $(BOOT_DIR)/nyan_loop.nyan
+BOOT_AUDIO_INTRO := $(BOOT_DIR)/nyan_audio_intro.wav
+BOOT_AUDIO_LOOP := $(BOOT_DIR)/nyan_audio_loop.wav
+BOOT_ASSETS := $(BOOT_NYAN_LOOP) $(BOOT_AUDIO_INTRO) $(BOOT_AUDIO_LOOP)
 
 # libc paths
 LIBC_DIR     := $(LIBS_DIR)/libc
@@ -200,13 +210,28 @@ FCEUX_BIN      := $(DISK_BIN)/fceux
 # ============================================================
 # Targets
 # ============================================================
-.PHONY: all clean libs apps
+.PHONY: all clean libs apps boot-assets nyanpack
 
 all: libs apps
 
 libs: $(LIBC_ARCHIVE) $(LIBOS_ARCHIVE) $(LIBAM_ARCHIVE) $(LIBNDL_ARCHIVE) $(LIBMINISDL_ARCHIVE) $(LIBBMP_ARCHIVE) $(LIBFIXEDPTC_ARCHIVE) $(LIBSDLIMG_ARCHIVE)
 
-apps: libs $(APP_BINS) $(DESKTOP_BIN) $(BIRD_BIN) $(PAL_BIN) $(FCEUX_BIN) pal-data
+apps: libs boot-assets $(APP_BINS) $(DESKTOP_BIN) $(BIRD_BIN) $(PAL_BIN) $(FCEUX_BIN) pal-data
+
+boot-assets:
+	@for f in $(BOOT_ASSETS); do \
+		if [ ! -f "$$f" ]; then \
+			echo "missing boot resource: $$f"; \
+			exit 1; \
+		fi; \
+	done
+	@echo "  -> boot assets ready"
+
+nyanpack: $(NYANPACK_BIN)
+
+$(NYANPACK_BIN): $(NYANPACK_SRC)
+	@mkdir -p $(dir $@)
+	$(HOST_CC) -Wall -Wextra -O2 $< -o $@
 
 # ---------- libc ----------
 

@@ -37,8 +37,8 @@
 
 /* ======== Disk geometry ======== */
 
-#define DISK_SIZE_MB    64
-#define NBLOCKS         (DISK_SIZE_MB * 1024 * 1024 / BLOCK_SIZE) /* 131072 */
+#define DISK_SIZE_MB    256
+#define NBLOCKS         (DISK_SIZE_MB * 1024 * 1024 / BLOCK_SIZE)
 
 #define SB_BLOCK        1
 #define INODE_START     2
@@ -49,8 +49,8 @@
 #define BMAP_START      (INODE_START + INODE_BLOCKS)       /* 116 */
 /* Need ceil(NBLOCKS / BPB) bitmap blocks; BPB = BLOCK_SIZE*8 = 4096 */
 #define BPB             (BLOCK_SIZE * 8)
-#define BMAP_BLOCKS     ((NBLOCKS + BPB - 1) / BPB)       /* 32 */
-#define DATA_START      (BMAP_START + BMAP_BLOCKS)         /* 148 */
+#define BMAP_BLOCKS     ((NBLOCKS + BPB - 1) / BPB)
+#define DATA_START      (BMAP_START + BMAP_BLOCKS)
 
 /* ======== On-disk structures (packed to match kernel) ======== */
 

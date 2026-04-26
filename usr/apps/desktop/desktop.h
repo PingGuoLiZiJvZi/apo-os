@@ -146,5 +146,6 @@ uint8_t poll_dirty(int *layout_dirty, Rect *damage, int *damage_count);
 
 void render_damage(Rect *damage, int damage_count);
 void render_frame(int full_redraw);
+void run_boot_intro(void);
 
 #endif

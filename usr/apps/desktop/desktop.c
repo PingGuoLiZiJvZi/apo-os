@@ -39,6 +39,7 @@ int main(int argc, char *argv[]) {
     num_windows = 0;
 
     printf("[desktop] ready\n");
+    run_boot_intro();
 
     /* Initial draw */
     int ui_dirty = 1;
