@@ -16,6 +16,8 @@
 #define SND_CTRL_DESC 8
 #define SND_TX_DESC 16
 #define SND_OTHER_DESC 4
+#define SND_TX_SLOTS 5
+#define SND_TX_BUFFER_BYTES 4096
 
 #define VIRTIO_SND_R_PCM_SET_PARAMS 0x0101
 #define VIRTIO_SND_R_PCM_PREPARE    0x0102
@@ -73,6 +75,15 @@ static struct {
   VirtioQueue q_event;
   VirtioQueue q_tx;
   VirtioQueue q_rx;
+  struct {
+    int in_use;
+    int d0;
+    int d1;
+    int d2;
+    struct virtio_snd_pcm_xfer xfer;
+    struct virtio_snd_pcm_status status;
+    uint8_t data[SND_TX_BUFFER_BYTES];
+  } tx[SND_TX_SLOTS];
 } g_snd;
 
 static int q_alloc_desc(VirtioQueue *q) {
@@ -138,6 +149,37 @@ static int queue_submit_sync(VirtioQueue *q, int head_desc) {
   return 0;
 }
 
+static void queue_submit_async(VirtioQueue *q, int head_desc) {
+  uint16_t slot = q->avail->idx % q->num_desc;
+  q->avail->ring[slot] = (uint16_t)head_desc;
+  __sync_synchronize();
+  q->avail->idx++;
+  __sync_synchronize();
+  virtio_mmio_write32(g_snd.dev.base, VIRTIO_MMIO_QUEUE_NOTIFY, q->queue_sel);
+}
+
+static void snd_tx_reclaim(void) {
+  VirtioQueue *q = &g_snd.q_tx;
+
+  while (q->used->idx != q->used_idx) {
+    uint16_t used_slot = q->used_idx % q->num_desc;
+    uint32_t head = q->used->ring[used_slot].id;
+
+    for (int i = 0; i < SND_TX_SLOTS; i++) {
+      if (!g_snd.tx[i].in_use || g_snd.tx[i].d0 != (int)head) {
+        continue;
+      }
+      q_free_desc(q, g_snd.tx[i].d0);
+      q_free_desc(q, g_snd.tx[i].d1);
+      q_free_desc(q, g_snd.tx[i].d2);
+      g_snd.tx[i].in_use = 0;
+      break;
+    }
+
+    q->used_idx++;
+  }
+}
+
 static int snd_pcm_cmd(uint32_t code, uint32_t stream_id) {
   struct virtio_snd_pcm_hdr req;
   struct virtio_snd_hdr resp;
@@ -189,8 +231,8 @@ static int snd_set_params(void) {
   memset(&resp, 0, sizeof(resp));
   req.hdr.code = VIRTIO_SND_R_PCM_SET_PARAMS;
   req.stream_id = 0;
-  req.buffer_bytes = 4096;
-  req.period_bytes = 1024;
+  req.buffer_bytes = SND_TX_SLOTS * SND_TX_BUFFER_BYTES;
+  req.period_bytes = SND_TX_BUFFER_BYTES;
   req.features = 0;
   req.channels = 2;
   req.format = VIRTIO_SND_PCM_FMT_S16;
@@ -272,9 +314,18 @@ int virtio_sound_write(const void *buf, size_t n) {
 
   size_t aligned = (n / 4) * 4;
   if (aligned == 0) return 0;
+  if (aligned > SND_TX_BUFFER_BYTES) aligned = SND_TX_BUFFER_BYTES;
 
-  struct virtio_snd_pcm_xfer xfer;
-  struct virtio_snd_pcm_status st;
+  snd_tx_reclaim();
+
+  int slot = -1;
+  for (int i = 0; i < SND_TX_SLOTS; i++) {
+    if (!g_snd.tx[i].in_use) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot < 0) return 0;
 
   int d0 = q_alloc_desc(&g_snd.q_tx);
   int d1 = q_alloc_desc(&g_snd.q_tx);
@@ -286,39 +337,37 @@ int virtio_sound_write(const void *buf, size_t n) {
     return -1;
   }
 
-  xfer.stream_id = 0;
-  memset(&st, 0, sizeof(st));
+  memcpy(g_snd.tx[slot].data, buf, aligned);
+  g_snd.tx[slot].xfer.stream_id = 0;
+  memset(&g_snd.tx[slot].status, 0, sizeof(g_snd.tx[slot].status));
 
-  g_snd.q_tx.desc[d0].addr = (uint64_t)&xfer;
-  g_snd.q_tx.desc[d0].len = sizeof(xfer);
+  g_snd.q_tx.desc[d0].addr = (uint64_t)&g_snd.tx[slot].xfer;
+  g_snd.q_tx.desc[d0].len = sizeof(g_snd.tx[slot].xfer);
   g_snd.q_tx.desc[d0].flags = VRING_DESC_F_NEXT;
   g_snd.q_tx.desc[d0].next = (uint16_t)d1;
 
-  g_snd.q_tx.desc[d1].addr = (uint64_t)buf;
+  g_snd.q_tx.desc[d1].addr = (uint64_t)g_snd.tx[slot].data;
   g_snd.q_tx.desc[d1].len = (uint32_t)aligned;
   g_snd.q_tx.desc[d1].flags = VRING_DESC_F_NEXT;
   g_snd.q_tx.desc[d1].next = (uint16_t)d2;
 
-  g_snd.q_tx.desc[d2].addr = (uint64_t)&st;
-  g_snd.q_tx.desc[d2].len = sizeof(st);
+  g_snd.q_tx.desc[d2].addr = (uint64_t)&g_snd.tx[slot].status;
+  g_snd.q_tx.desc[d2].len = sizeof(g_snd.tx[slot].status);
   g_snd.q_tx.desc[d2].flags = VRING_DESC_F_WRITE;
   g_snd.q_tx.desc[d2].next = 0;
 
-  if (queue_submit_sync(&g_snd.q_tx, d0) < 0) {
-    q_free_desc(&g_snd.q_tx, d0);
-    q_free_desc(&g_snd.q_tx, d1);
-    q_free_desc(&g_snd.q_tx, d2);
-    return -1;
-  }
+  g_snd.tx[slot].d0 = d0;
+  g_snd.tx[slot].d1 = d1;
+  g_snd.tx[slot].d2 = d2;
+  g_snd.tx[slot].in_use = 1;
 
-  q_free_desc(&g_snd.q_tx, d0);
-  q_free_desc(&g_snd.q_tx, d1);
-  q_free_desc(&g_snd.q_tx, d2);
-  return (st.status == VIRTIO_SND_S_OK) ? (int)aligned : -1;
+  queue_submit_async(&g_snd.q_tx, d0);
+  return (int)aligned;
 }
 
 void virtio_sound_poll(void) {
   if (!g_snd.ready) return;
+  snd_tx_reclaim();
   virtio_ack_interrupt(&g_snd.dev);
 }
 

@@ -12,6 +12,7 @@
 #define BOOT_AUDIO_LOOP_PATH "/share/boot/nyan_audio_loop.wav"
 
 #define NYAN_FORMAT_RGB565_RLE 1u
+#define BOOT_MAX_SKIP_FRAMES 4u
 
 typedef struct {
     int fd;
@@ -465,25 +466,21 @@ static uint32_t rgb565_to_xrgb(uint16_t c) {
     uint32_t g = (uint32_t)((c >> 5) & 0x3f);
     uint32_t b = (uint32_t)(c & 0x1f);
 
-    r = r * 255u / 31u;
-    g = g * 255u / 63u;
-    b = b * 255u / 31u;
+    r = (r << 3) | (r >> 2);
+    g = (g << 2) | (g >> 4);
+    b = (b << 3) | (b >> 2);
     return (r << 16) | (g << 8) | b;
 }
 
-static void draw_run(uint32_t start_pixel, uint32_t count,
-                     uint16_t color565, const NyanMovie *movie,
+static void draw_run(uint32_t *row, uint32_t *col, uint32_t count,
+                     uint32_t color, const NyanMovie *movie,
                      int dst_x, int dst_y) {
-    uint32_t p = start_pixel;
     uint32_t left = count;
-    uint32_t color = rgb565_to_xrgb(color565);
 
     while (left > 0) {
-        uint32_t row = p / movie->width;
-        uint32_t col = p - row * movie->width;
-        uint32_t span = movie->width - col;
-        int y = dst_y + (int)row;
-        int x = dst_x + (int)col;
+        uint32_t span = movie->width - *col;
+        int y = dst_y + (int)*row;
+        int x = dst_x + (int)*col;
 
         if (span > left) {
             span = left;
@@ -505,7 +502,11 @@ static void draw_run(uint32_t start_pixel, uint32_t count,
             }
         }
 
-        p += span;
+        *col += span;
+        if (*col >= movie->width) {
+            *col = 0;
+            (*row)++;
+        }
         left -= span;
     }
 }
@@ -515,9 +516,11 @@ static int decode_nyan_frame(const NyanMovie *movie, uint32_t payload_size,
     uint32_t pos = 0;
     uint32_t pixel = 0;
     uint32_t total = movie->width * movie->height;
+    uint32_t row = 0;
+    uint32_t col = 0;
 
     while (pos + 4 <= payload_size && pixel < total) {
-        uint16_t count = le16(movie->frame_buf + pos);
+        uint32_t count = le16(movie->frame_buf + pos);
         uint16_t color = le16(movie->frame_buf + pos + 2);
         pos += 4;
 
@@ -525,10 +528,10 @@ static int decode_nyan_frame(const NyanMovie *movie, uint32_t payload_size,
             continue;
         }
         if (pixel + count > total) {
-            count = (uint16_t)(total - pixel);
+            count = total - pixel;
         }
 
-        draw_run(pixel, count, color, movie, dst_x, dst_y);
+        draw_run(&row, &col, count, rgb565_to_xrgb(color), movie, dst_x, dst_y);
         pixel += count;
     }
 
@@ -608,6 +611,20 @@ static int rewind_nyan_movie(NyanMovie *movie) {
     return lseek(movie->fd, (off_t)movie->data_start, SEEK_SET) >= 0;
 }
 
+static int skip_nyan_frame(NyanMovie *movie) {
+    uint8_t len_buf[4];
+    uint32_t payload_size;
+
+    if (!read_exact_fd(movie->fd, len_buf, sizeof(len_buf))) {
+        return 0;
+    }
+    payload_size = le32(len_buf);
+    if (payload_size > movie->frame_buf_size) {
+        return 0;
+    }
+    return skip_fd(movie->fd, payload_size);
+}
+
 static void flush_movie_rect(int dst_x, int dst_y, int w, int h) {
     Rect r;
 
@@ -673,6 +690,26 @@ static int play_nyan_loop(BootAudio *audio) {
             flush_movie_rect(dst_x, dst_y, (int)movie.width, (int)movie.height);
 
             next_tick += frame_ms;
+            for (uint32_t skipped = 0;
+                 skipped < BOOT_MAX_SKIP_FRAMES &&
+                 frame + 1 < movie.frame_count &&
+                 (int32_t)(NDL_GetTicks() - next_tick) > (int32_t)frame_ms;
+                 skipped++) {
+                if (!skip_nyan_frame(&movie)) {
+                    stop = 1;
+                    break;
+                }
+                frame++;
+                next_tick += frame_ms;
+                boot_audio_pump(audio);
+                if (boot_stop_requested()) {
+                    stop = 1;
+                    break;
+                }
+            }
+            if (stop) {
+                break;
+            }
             if ((int32_t)(NDL_GetTicks() - next_tick) > 1000) {
                 next_tick = NDL_GetTicks() + frame_ms;
             }

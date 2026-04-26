@@ -56,7 +56,7 @@ DISK_IMG := $(BUILD_DIR)/disk.img
 QEMU_COMMON := -machine virt -bios default -kernel $(KERNEL_BIN) \
 			   -drive file=$(DISK_IMG),format=raw,id=hd0 \
 			   -device virtio-blk-device,drive=hd0 \
-			   -device virtio-gpu-device \
+			   -device virtio-gpu-device,xres=640,yres=480 \
 			   -device virtio-keyboard-device \
 			   -device virtio-tablet-device \
 			   -audiodev sdl,id=audio0 \
