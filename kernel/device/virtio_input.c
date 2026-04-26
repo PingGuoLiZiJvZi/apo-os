@@ -53,6 +53,22 @@ static void enqueue_event(uint16_t type, uint16_t code, uint32_t value) {
   g_in.q_tail = next_tail;
 }
 
+static int input_queue_cap(void) {
+  return (int)(sizeof(g_in.q) / sizeof(g_in.q[0]));
+}
+
+static void remove_event_at(int idx) {
+  int cap = input_queue_cap();
+  int cur = idx;
+  while (cur != g_in.q_tail) {
+    int next = (cur + 1) % cap;
+    if (next == g_in.q_tail) break;
+    g_in.q[cur] = g_in.q[next];
+    cur = next;
+  }
+  g_in.q_tail = (g_in.q_tail + cap - 1) % cap;
+}
+
 static int input_post_buffer(InputDev *d, int desc_idx) {
   if (!d || desc_idx < 0) return -1;
   d->dev.desc[desc_idx].addr = (uint64_t)&d->event_buf[desc_idx];
@@ -121,8 +137,30 @@ void virtio_input_poll(void) {
 int virtio_input_get_event(VirtioInputEvent *ev) {
   if (g_in.q_head == g_in.q_tail) return 0;
   *ev = g_in.q[g_in.q_head];
-  g_in.q_head = (g_in.q_head + 1) % (int)(sizeof(g_in.q) / sizeof(g_in.q[0]));
+  g_in.q_head = (g_in.q_head + 1) % input_queue_cap();
   return 1;
+}
+
+int virtio_input_get_event_filtered(int include_pointer, int include_keyboard, VirtioInputEvent *ev) {
+  if (!ev || g_in.q_head == g_in.q_tail) return 0;
+
+  int cap = input_queue_cap();
+  for (int idx = g_in.q_head; idx != g_in.q_tail; idx = (idx + 1) % cap) {
+    int is_keyboard = (g_in.q[idx].type == 1 && g_in.q[idx].code < 256);
+    int is_pointer = (g_in.q[idx].type == 3 ||
+                      (g_in.q[idx].type == 1 && g_in.q[idx].code >= 256));
+    int is_sync = (g_in.q[idx].type == 0);
+    if ((is_keyboard && !include_keyboard) ||
+        (is_pointer && !include_pointer) ||
+        (is_sync && !include_pointer) ||
+        (!is_keyboard && !is_pointer && !is_sync)) {
+      continue;
+    }
+    *ev = g_in.q[idx];
+    remove_event_at(idx);
+    return 1;
+  }
+  return 0;
 }
 
 int virtio_input_match_irq(int irq) {

@@ -39,6 +39,10 @@ static void reset_pcb_slot(PCB *pcb) {
     pcb->sleep_deadline = 0;
     pcb->shadow_fb_npages = 0;
     pcb->fb_dirty = 0;
+    pcb->fb_dirty_x = 0;
+    pcb->fb_dirty_y = 0;
+    pcb->fb_dirty_w = 0;
+    pcb->fb_dirty_h = 0;
 }
 
 static int parent_has_child_pid(PCB *parent, int pid) {
@@ -233,6 +237,12 @@ void proc_exec_reclaim(PCB *pcb) {
     }
     pcb->max_brk = 0;
     pcb->mmap_base = 0;
+    pcb->shadow_fb_npages = 0;
+    pcb->fb_dirty = 0;
+    pcb->fb_dirty_x = 0;
+    pcb->fb_dirty_y = 0;
+    pcb->fb_dirty_w = 0;
+    pcb->fb_dirty_h = 0;
 }
 
 static void terminate_proc(PCB *pcb, int status) {
@@ -253,6 +263,10 @@ static void terminate_proc(PCB *pcb, int status) {
 
     pcb->shadow_fb_npages = 0;
     pcb->fb_dirty = 0;
+    pcb->fb_dirty_x = 0;
+    pcb->fb_dirty_y = 0;
+    pcb->fb_dirty_w = 0;
+    pcb->fb_dirty_h = 0;
 
     pcb->max_brk = 0;
     pcb->mmap_base = 0;

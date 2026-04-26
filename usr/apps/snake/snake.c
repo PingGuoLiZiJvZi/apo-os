@@ -6,6 +6,8 @@
 
 #define MAX_LENGTH 100
 #define TILE_W 8
+#define BOARD_TILES_W 32
+#define BOARD_TILES_H 24
 
 typedef enum { NONE, UP, DOWN, LEFT, RIGHT } dir_t;
 
@@ -34,9 +36,10 @@ static void refresh() {
 
 static void draw_tile(int y, int x, uint32_t color) {
   static uint32_t buf[TILE_W * TILE_W];
-  uint32_t last_color = 0xffffffff;
+  static uint32_t last_color = 0xffffffff;
   if (last_color != color) {
     for (int i = 0; i < LENGTH(buf); i ++) { buf[i] = color; }
+    last_color = color;
   }
   io_write(AM_GPU_FBDRAW, x * TILE_W, y * TILE_W, buf, TILE_W, TILE_W, false);
 }
@@ -133,8 +136,8 @@ int main() {
   dir_t dir = RIGHT;
 
   ioe_init();
-  screen.height = io_read(AM_GPU_CONFIG).height / TILE_W;
-  screen.width  = io_read(AM_GPU_CONFIG).width / TILE_W;
+  screen.width  = BOARD_TILES_W;
+  screen.height = BOARD_TILES_H;
 
   game_size.width  = screen.width - 2;
   game_size.height = screen.height - 2;
@@ -146,9 +149,9 @@ int main() {
   snake.length = 2;
   snake.index = 1;
 
-  board.left   = screen.width / 2 - game_size.width / 2 - 1;
+  board.left   = 0;
   board.right  = board.left + game_size.width + 1;
-  board.top    = screen.height / 2 - game_size.height / 2 - 1;
+  board.top    = 0;
   board.bottom = board.top + game_size.height + 1;
   print_board(board);
 
@@ -179,10 +182,14 @@ int main() {
 
     uint64_t sleep = 100000 - snake.length * 5000 < 5000 ? 5000 : 100000 - snake.length * 5000;
     uint64_t next_us = io_read(AM_TIMER_UPTIME).us + sleep;
-    while (io_read(AM_TIMER_UPTIME).us < next_us) ;
+    while (io_read(AM_TIMER_UPTIME).us < next_us) {
+      yield();
+    }
   } while (!snake.dead);
 
   printf("GAME OVER\nPress Q to Exit\n");
-  while (read_key() != AM_KEY_Q);
+  while (read_key() != AM_KEY_Q) {
+    yield();
+  }
   return 0;
 }

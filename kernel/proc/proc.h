@@ -7,6 +7,7 @@
 #define KSTACK_PAGENUM 8
 #define MAX_PROCS 8
 #define MAX_SUB_PROCS 4
+#define SHADOW_FB_MAX_PAGES 1024
 #define PGSIZE PAGE_SIZE
 #define MAX_FD 32
 
@@ -43,9 +44,13 @@ typedef struct PCB {
     int exit_status;
     uint64_t sleep_deadline;
 
-    char shadow_fb_pages[512][PAGE_SIZE]; // physical pages (max 512 = 2MB)
+    char shadow_fb_pages[SHADOW_FB_MAX_PAGES][PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
     int   shadow_fb_npages;     // number of allocated pages
     uint8_t fb_dirty;           // set by fbsync, read/cleared by desktop
+    int fb_dirty_x;
+    int fb_dirty_y;
+    int fb_dirty_w;
+    int fb_dirty_h;
 } PCB;
 // pid is the order in the PCBs array, i.e. &PCBs[pid] is the PCB for pid
 extern PCB PCBs[MAX_PROCS];

@@ -44,7 +44,7 @@ void plic_init();
 int  plic_claim();
 void plic_complete(int irq);
 
-#define TIMER_INTERVAL  10000000UL  
+#define TIMER_INTERVAL  100000UL
 void timer_init();
 void timer_set_next();
 uint64_t timer_get_time();

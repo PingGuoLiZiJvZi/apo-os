@@ -7,6 +7,93 @@
 #include "../main/sbi.h"
 #include "../proc/proc.h"
 
+typedef struct {
+    uint8_t mask;
+    uint8_t reserved[3];
+    GpuDirtyRect rects[MAX_PROCS];
+} FbSyncInfo;
+
+static int input_focus_pid = 1;
+
+static int current_pid(void) {
+    if (!current_proc) return 0;
+    if (current_proc < &PCBs[0] || current_proc >= &PCBs[MAX_PROCS]) return 0;
+    return (int)(current_proc - &PCBs[0]) + 1;
+}
+
+static int pid_can_receive_input(int pid) {
+    if (pid <= 0 || pid > MAX_PROCS) return 0;
+    int state = PCBs[pid - 1].proc_state;
+    return state != EMPTY_PROC && state != ZOMBIE_PROC;
+}
+
+static int input_focus_current(void) {
+    if (!pid_can_receive_input(input_focus_pid)) input_focus_pid = 1;
+    return input_focus_pid;
+}
+
+static void input_focus_set(int pid) {
+    if (pid_can_receive_input(pid)) {
+        input_focus_pid = pid;
+    } else {
+        input_focus_pid = 1;
+    }
+}
+
+static int proc_fb_dirty_add(PCB *pcb, const GpuDirtyRect *rect) {
+    if (!pcb || !rect) return 0;
+
+    int screen_w = 0;
+    int screen_h = 0;
+    if (virtio_gpu_resolution(&screen_w, &screen_h) < 0) return 0;
+    if (screen_w <= 0 || screen_h <= 0) return 0;
+
+    int x1 = rect->x;
+    int y1 = rect->y;
+    int x2 = rect->x + rect->w;
+    int y2 = rect->y + rect->h;
+
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    if (x2 > screen_w) x2 = screen_w;
+    if (y2 > screen_h) y2 = screen_h;
+    if (x1 >= x2 || y1 >= y2) return 0;
+
+    if (!pcb->fb_dirty || pcb->fb_dirty_w <= 0 || pcb->fb_dirty_h <= 0) {
+        pcb->fb_dirty_x = x1;
+        pcb->fb_dirty_y = y1;
+        pcb->fb_dirty_w = x2 - x1;
+        pcb->fb_dirty_h = y2 - y1;
+    } else {
+        int old_x2 = pcb->fb_dirty_x + pcb->fb_dirty_w;
+        int old_y2 = pcb->fb_dirty_y + pcb->fb_dirty_h;
+        if (x1 > pcb->fb_dirty_x) x1 = pcb->fb_dirty_x;
+        if (y1 > pcb->fb_dirty_y) y1 = pcb->fb_dirty_y;
+        if (x2 < old_x2) x2 = old_x2;
+        if (y2 < old_y2) y2 = old_y2;
+        pcb->fb_dirty_x = x1;
+        pcb->fb_dirty_y = y1;
+        pcb->fb_dirty_w = x2 - x1;
+        pcb->fb_dirty_h = y2 - y1;
+    }
+    pcb->fb_dirty = 1;
+    return 1;
+}
+
+static void proc_fb_dirty_mark_full_if_empty(PCB *pcb) {
+    if (!pcb) return;
+    pcb->fb_dirty = 1;
+    if (pcb->fb_dirty_w > 0 && pcb->fb_dirty_h > 0) return;
+
+    int screen_w = 0;
+    int screen_h = 0;
+    if (virtio_gpu_resolution(&screen_w, &screen_h) < 0) return;
+    pcb->fb_dirty_x = 0;
+    pcb->fb_dirty_y = 0;
+    pcb->fb_dirty_w = screen_w;
+    pcb->fb_dirty_h = screen_h;
+}
+
 static inline void mmio_write8(uint64_t addr, uint8_t val) {
     *(volatile uint8_t *)addr = val;
 }
@@ -101,7 +188,13 @@ void timer_init() {
 static int read_events_device(void *buf, size_t n) {
     VirtioInputEvent ev;
     if (!buf || n == 0) return 0;
-    while (virtio_input_get_event(&ev)) {
+    int pid = current_pid();
+    int focus_pid = input_focus_current();
+    int is_desktop = virtio_gpu_is_desktop_proc();
+    int include_pointer = is_desktop;
+    int include_keyboard = (pid == focus_pid);
+
+    while (virtio_input_get_event_filtered(include_pointer, include_keyboard, &ev)) {
         char out[64];
         int len = 0;
 
@@ -148,11 +241,36 @@ int device_fs_read(const char *name, uint32_t *off, void *buf, size_t n) {
     // Desktop reads fbsync to get dirty bitmask 
     if (strcmp(name, "fbsync") == 0) {
         if (n < 1) return 0;
+        if (n >= sizeof(FbSyncInfo)) {
+            FbSyncInfo info;
+            memset(&info, 0, sizeof(info));
+            for (int i = 0; i < MAX_PROCS; i++) {
+                if (PCBs[i].fb_dirty) {
+                    info.mask |= (uint8_t)(1 << i);
+                    info.rects[i].x = PCBs[i].fb_dirty_x;
+                    info.rects[i].y = PCBs[i].fb_dirty_y;
+                    info.rects[i].w = PCBs[i].fb_dirty_w;
+                    info.rects[i].h = PCBs[i].fb_dirty_h;
+                    PCBs[i].fb_dirty = 0;
+                    PCBs[i].fb_dirty_x = 0;
+                    PCBs[i].fb_dirty_y = 0;
+                    PCBs[i].fb_dirty_w = 0;
+                    PCBs[i].fb_dirty_h = 0;
+                }
+            }
+            memcpy(buf, &info, sizeof(info));
+            return (int)sizeof(info);
+        }
+
         uint8_t mask = 0;
         for (int i = 0; i < MAX_PROCS; i++) {
             if (PCBs[i].fb_dirty) {
                 mask |= (uint8_t)(1 << i);
                 PCBs[i].fb_dirty = 0;
+                PCBs[i].fb_dirty_x = 0;
+                PCBs[i].fb_dirty_y = 0;
+                PCBs[i].fb_dirty_w = 0;
+                PCBs[i].fb_dirty_h = 0;
             }
         }
         *(uint8_t *)buf = mask;
@@ -171,6 +289,16 @@ int device_fs_read(const char *name, uint32_t *off, void *buf, size_t n) {
 int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) {
     if (!name || !buf) return -1;
 
+    if (strcmp(name, "input") == 0) {
+        if (!virtio_gpu_is_desktop_proc()) return -1;
+        if (n >= sizeof(int)) {
+            int pid = *(const int *)buf;
+            input_focus_set(pid);
+        }
+        if (off) *off += (uint32_t)n;
+        return (int)n;
+    }
+
     if (strcmp(name, "audio") == 0) {
         int w = virtio_sound_write(buf, n);
         if (w > 0 && off) *off += (uint32_t)w;
@@ -186,7 +314,19 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
             }
             if (virtio_gpu_fbsync() < 0) return -1;
         } else {
-            current_proc->fb_dirty = 1;
+            int has_rect = 0;
+            if (n >= sizeof(GpuDirtyRect) && (n % sizeof(GpuDirtyRect)) == 0) {
+                const GpuDirtyRect *rects = (const GpuDirtyRect *)buf;
+                size_t count = n / sizeof(GpuDirtyRect);
+                for (size_t i = 0; i < count; i++) {
+                    if (proc_fb_dirty_add(current_proc, &rects[i])) {
+                        has_rect = 1;
+                    }
+                }
+            }
+            if (!has_rect) {
+                proc_fb_dirty_mark_full_if_empty(current_proc);
+            }
         }
         if (off) *off += (uint32_t)n;
         return (int)n;

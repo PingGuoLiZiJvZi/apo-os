@@ -529,9 +529,14 @@ int virtio_gpu_shadow_fb_page(uint64_t offset, uint64_t *pa) {
   if (!g_gpu.ready || !pa) return -1;
   if ((offset % PAGE_SIZE) != 0) return -1;
   if (offset >= virtio_gpu_fb_size()) return -1;
+  if (g_gpu.pages > SHADOW_FB_MAX_PAGES) return -1;
+  if (((uint64_t)current_proc->shadow_fb_pages & (PAGE_SIZE - 1)) != 0) return -1;
 
-  if (current_proc->shadow_fb_npages <= 0)
+  if (current_proc->shadow_fb_npages <= 0) {
     current_proc->shadow_fb_npages = g_gpu.pages;
+    memset(current_proc->shadow_fb_pages, 0,
+           (size_t)current_proc->shadow_fb_npages * PAGE_SIZE);
+  }
 
   uint64_t page_idx = offset / PAGE_SIZE;
   if (page_idx >= (uint64_t)current_proc->shadow_fb_npages) return -1;
@@ -544,8 +549,10 @@ int virtio_gpu_child_fb_page(int child_idx, uint64_t offset, uint64_t *pa) {
   if (child_idx < 0 || child_idx >= MAX_PROCS) return -1;
   if ((offset % PAGE_SIZE) != 0) return -1;
   if (offset >= virtio_gpu_fb_size()) return -1;
+  if (g_gpu.pages > SHADOW_FB_MAX_PAGES) return -1;
 
   PCB *child = &PCBs[child_idx];
+  if (((uint64_t)child->shadow_fb_pages & (PAGE_SIZE - 1)) != 0) return -1;
   if (child->shadow_fb_npages <= 0) return -1;
 
   uint64_t page_idx = offset / PAGE_SIZE;
