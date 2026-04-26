@@ -323,6 +323,7 @@ static void daemon_watch_child(int child_pid) {
     if (evfd >= 0) {
       char evbuf[64];
       int n = read(evfd, evbuf, sizeof(evbuf) - 1);
+      printf("[menu] read event: %.*s\n", n, evbuf);
       if (n > 0) {
         evbuf[n] = '\0';
         int code = 0;

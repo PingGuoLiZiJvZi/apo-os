@@ -17,6 +17,7 @@ Area heap = {0};
 static int g_inited = 0;
 static int g_evfd = -1;
 static int g_fbfd = -1;
+static int g_fbsyncfd = -1;
 static int g_audiofd = -1;
 static int g_serialfd = -1;
 static int g_screen_w = 640;
@@ -220,6 +221,7 @@ bool ioe_init(void) {
 
   g_evfd = open("/device/events", O_RDONLY, 0);
   g_fbfd = open("/device/fb", O_WRONLY, 0);
+  g_fbsyncfd = open("/device/fbsync", O_WRONLY, 0);
   g_audiofd = open("/device/audio", O_WRONLY, 0);
   g_serialfd = open("/device/serial", O_RDONLY, 0);
 
@@ -314,14 +316,19 @@ static void am_gpu_status(void *buf) {
 
 static void am_gpu_fbdraw(void *buf) {
   AM_GPU_FBDRAW_T *ctl = (AM_GPU_FBDRAW_T *)buf;
-  if (g_fbfd < 0 || !ctl->pixels || ctl->w <= 0 || ctl->h <= 0) return;
+  if (g_fbfd >= 0 && ctl->pixels && ctl->w > 0 && ctl->h > 0) {
+    uint8_t *pixels = (uint8_t *)ctl->pixels;
+    for (int row = 0; row < ctl->h; row++) {
+      off_t off = (off_t)(((ctl->y + row) * g_screen_w + ctl->x) * 4);
+      if (lseek(g_fbfd, off, SEEK_SET) < 0) return;
+      int len = ctl->w * 4;
+      write(g_fbfd, pixels + row * len, (size_t)len);
+    }
+  }
 
-  uint8_t *pixels = (uint8_t *)ctl->pixels;
-  for (int row = 0; row < ctl->h; row++) {
-    off_t off = (off_t)(((ctl->y + row) * g_screen_w + ctl->x) * 4);
-    if (lseek(g_fbfd, off, SEEK_SET) < 0) return;
-    int len = ctl->w * 4;
-    write(g_fbfd, pixels + row * len, (size_t)len);
+  if (ctl->sync && g_fbsyncfd >= 0) {
+    char ch = 0;
+    write(g_fbsyncfd, &ch, 1);
   }
 }
 

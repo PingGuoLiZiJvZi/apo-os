@@ -159,6 +159,12 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
         return w;
     }
 
+    if (strcmp(name, "fbsync") == 0) {
+        if (virtio_gpu_fbsync() < 0) return -1;
+        if (off) *off += (uint32_t)n;
+        return (int)n;
+    }
+
     if (strcmp(name, "fb") == 0) {
         int w = 0, h = 0;
         if (virtio_gpu_resolution(&w, &h) < 0) return -1;
@@ -179,7 +185,7 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
             uint32_t remain = total_px - written_px;
             uint32_t chunk_px = remain < row_left ? remain : row_left;
 
-            if (virtio_gpu_fbdraw(x, y, (int)chunk_px, 1, src + written_px, 1) < 0) {
+            if (virtio_gpu_fbwrite(x, y, (int)chunk_px, 1, src + written_px) < 0) {
                 return -1;
             }
 

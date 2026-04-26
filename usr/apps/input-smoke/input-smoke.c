@@ -78,6 +78,12 @@ int main() {
     return 1;
   }
 
+  int fbsyncfd = open("/device/fbsync", O_WRONLY, 0);
+  if (fbsyncfd < 0) {
+    printf("[input-smoke] open /device/fbsync failed\n");
+    return 1;
+  }
+
   int audiofd = open("/device/audio", O_WRONLY, 0);
   if (audiofd < 0) {
     printf("[input-smoke] open /device/audio failed (audio disabled)\n");
@@ -214,6 +220,9 @@ int main() {
         lseek(fbfd, ((mouse_y + row) * screen_w + mouse_x) * 4, SEEK_SET);
         write(fbfd, green, cursor * 4);
       }
+
+      char sync = 0;
+      write(fbsyncfd, &sync, 1);
 
       prev_x = x;
       prev_y = y;
