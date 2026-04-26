@@ -37,6 +37,8 @@ static void reset_pcb_slot(PCB *pcb) {
     pcb->proc_state = EMPTY_PROC;
     pcb->exit_status = 0;
     pcb->sleep_deadline = 0;
+    pcb->shadow_fb_npages = 0;
+    pcb->fb_dirty = 0;
 }
 
 static int parent_has_child_pid(PCB *parent, int pid) {
@@ -249,6 +251,9 @@ static void terminate_proc(PCB *pcb, int status) {
         free_user_pages(&pcb->as);
     }
 
+    pcb->shadow_fb_npages = 0;
+    pcb->fb_dirty = 0;
+
     pcb->max_brk = 0;
     pcb->mmap_base = 0;
     pcb->sleep_deadline = 0;
@@ -428,11 +433,10 @@ void init_proc(void) {
         reset_pcb_slot(&PCBs[i]);
     }
     
-    // M2 menu bootstrap: run menu as first process.
-    // argv[1] can be changed to "--no-anim" to skip startup animation.
-    const char *argv0[] = {"menu", "anim", 0};
+    // Desktop bootstrap: run desktop compositor as first process.
+    const char *argv0[] = {"desktop", 0};
     const char *envp0[] = {0};
-    context_uload(&PCBs[0], "/bin/menu", argv0, envp0);
+    context_uload(&PCBs[0], "/bin/desktop", argv0, envp0);
     proc_init_stdio(&PCBs[0]);
 
     // Keep remaining slots empty in M1.

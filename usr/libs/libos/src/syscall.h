@@ -31,7 +31,9 @@ enum {
   SYS_poll = 26,
   SYS_select = 27,
   SYS_mmap = 28,
-  SYS_munmap = 29
+  SYS_munmap = 29,
+  SYS_shutdown = 30,
+  SYS_reboot = 31
 };
 
 #endif

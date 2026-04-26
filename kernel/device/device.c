@@ -5,6 +5,7 @@
 #include "../libc/stdio.h"
 #include "../libc/string.h"
 #include "../main/sbi.h"
+#include "../proc/proc.h"
 
 static inline void mmio_write8(uint64_t addr, uint8_t val) {
     *(volatile uint8_t *)addr = val;
@@ -101,12 +102,16 @@ static int read_events_device(void *buf, size_t n) {
     VirtioInputEvent ev;
     if (!buf || n == 0) return 0;
     while (virtio_input_get_event(&ev)) {
-        if (ev.type != 1) {
+        char out[64];
+        int len = 0;
+
+        if (ev.type == 1) {
+            len = sprintf(out, "%s %u\n", ev.value ? "kd" : "ku", (unsigned)ev.code);
+        } else if (ev.type == 3) {
+            len = sprintf(out, "ma %u %u\n", (unsigned)ev.code, (unsigned)ev.value);
+        } else {
             continue;
         }
-
-        char out[64];
-        int len = sprintf(out, "%s %u\n", ev.value ? "kd" : "ku", (unsigned)ev.code);
 
         if (len < 0) return 0;
         if ((size_t)len > n) len = (int)n;
@@ -140,6 +145,19 @@ int device_fs_read(const char *name, uint32_t *off, void *buf, size_t n) {
     if (strcmp(name, "dispinfo") == 0) {
         return read_dispinfo_device(buf, n);
     }
+    // Desktop reads fbsync to get dirty bitmask 
+    if (strcmp(name, "fbsync") == 0) {
+        if (n < 1) return 0;
+        uint8_t mask = 0;
+        for (int i = 0; i < MAX_PROCS; i++) {
+            if (PCBs[i].fb_dirty) {
+                mask |= (uint8_t)(1 << i);
+                PCBs[i].fb_dirty = 0;
+            }
+        }
+        *(uint8_t *)buf = mask;
+        return 1;
+    }
 
     char *p = (char *)buf;
     for (size_t i = 0; i < n; i++) {
@@ -160,12 +178,16 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
     }
 
     if (strcmp(name, "fbsync") == 0) {
-        if (n >= sizeof(GpuDirtyRect) && (n % sizeof(GpuDirtyRect)) == 0) {
-            if (virtio_gpu_fbdirty_rects((const GpuDirtyRect *)buf, n / sizeof(GpuDirtyRect)) < 0) {
-                return -1;
+        if (virtio_gpu_is_desktop_proc()) {
+            if (n >= sizeof(GpuDirtyRect) && (n % sizeof(GpuDirtyRect)) == 0) {
+                if (virtio_gpu_fbdirty_rects((const GpuDirtyRect *)buf, n / sizeof(GpuDirtyRect)) < 0) {
+                    return -1;
+                }
             }
+            if (virtio_gpu_fbsync() < 0) return -1;
+        } else {
+            current_proc->fb_dirty = 1;
         }
-        if (virtio_gpu_fbsync() < 0) return -1;
         if (off) *off += (uint32_t)n;
         return (int)n;
     }
@@ -212,13 +234,39 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
 
 uint64_t device_mmap_size(const char *name) {
     if (!name) return 0;
-    if (strcmp(name, "fb") == 0) return virtio_gpu_fb_size();
+    if (strcmp(name, "fb") == 0) {
+        uint64_t fb_sz = virtio_gpu_fb_size();
+        if (virtio_gpu_is_desktop_proc()) {
+            // Desktop can mmap real fb + all child shadow FBs 
+            return fb_sz * (1 + MAX_PROCS);
+        }
+        return fb_sz;
+    }
     return 0;
 }
 
 int device_mmap_page(const char *name, uint64_t offset, uint64_t *pa) {
     if (!name || !pa) return -1;
-    if (strcmp(name, "fb") == 0) return virtio_gpu_fb_page(offset, pa);
+    if (strcmp(name, "fb") == 0) {
+        uint64_t fb_sz = virtio_gpu_fb_size();
+        if (virtio_gpu_is_desktop_proc()) {
+            if (offset < fb_sz) {
+                // Real GPU framebuffer
+                return virtio_gpu_fb_page(offset, pa);
+            } else {
+                // Child shadow FB: child_idx = (offset - fb_sz) / fb_sz 
+                uint64_t child_off = offset - fb_sz;
+                int child_idx = (int)(child_off / fb_sz);
+                uint64_t page_off = child_off % fb_sz;
+                // Align to page boundary 
+                page_off = page_off & ~(uint64_t)(PAGE_SIZE - 1);
+                return virtio_gpu_child_fb_page(child_idx, page_off, pa);
+            }
+        } else {
+            // Non-desktop: redirect to shadow FB 
+            return virtio_gpu_shadow_fb_page(offset, pa);
+        }
+    }
     return -1;
 }
 

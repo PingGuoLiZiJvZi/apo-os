@@ -376,3 +376,15 @@ int ioctl(int fd, unsigned long request, ...)
 	va_end(ap);
 	return _syscall_(SYS_ioctl, fd, request, arg);
 }
+
+void sys_shutdown(void)
+{
+	_syscall_(SYS_shutdown, 0, 0, 0);
+	while (1);
+}
+
+void sys_reboot(void)
+{
+	_syscall_(SYS_reboot, 0, 0, 0);
+	while (1);
+}

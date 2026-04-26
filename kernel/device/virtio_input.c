@@ -15,10 +15,6 @@
 #define VIRTIO_INPUT_CFG_SIZE 2
 #define VIRTIO_INPUT_CFG_DATA 8
 
-#define VIRTIO_INPUT_CFG_EV_BITS 0x11
-#define VIRTIO_EV_REL 2
-#define VIRTIO_EV_ABS 3
-
 typedef struct {
   uint16_t type;
   uint16_t code;
@@ -47,27 +43,6 @@ static inline void mmio_write8(uint64_t addr, uint8_t val) {
   *(volatile uint8_t *)addr = val;
 }
 
-static int input_has_event_bits(uint64_t base, uint8_t ev_type) {
-  uint64_t cfg = base + VIRTIO_MMIO_CONFIG;
-  mmio_write8(cfg + VIRTIO_INPUT_CFG_SELECT, VIRTIO_INPUT_CFG_EV_BITS);
-  mmio_write8(cfg + VIRTIO_INPUT_CFG_SUBSEL, ev_type);
-  uint8_t size = mmio_read8(cfg + VIRTIO_INPUT_CFG_SIZE);
-  if (size == 0) return 0;
-
-  if (size > 128) size = 128;
-  for (uint8_t i = 0; i < size; i++) {
-    if (mmio_read8(cfg + VIRTIO_INPUT_CFG_DATA + i) != 0) {
-      return 1;
-    }
-  }
-  return 0;
-}
-
-static int input_is_mouse_like(uint64_t base) {
-  if (input_has_event_bits(base, VIRTIO_EV_REL)) return 1;
-  if (input_has_event_bits(base, VIRTIO_EV_ABS)) return 1;
-  return 0;
-}
 
 static void enqueue_event(uint16_t type, uint16_t code, uint32_t value) {
   int next_tail = (g_in.q_tail + 1) % (int)(sizeof(g_in.q) / sizeof(g_in.q[0]));
@@ -118,11 +93,6 @@ int virtio_input_init(void) {
     InputDev *d = &g_in.devs[g_in.dev_count];
     if (virtio_mmio_find_device(VIRTIO_ID_INPUT, nth, &d->dev) < 0) break;
 
-    if (input_is_mouse_like(d->dev.base)) {
-      printf("  VirtIO input skip mouse-like device (irq=%d, idx=%d)\n", d->dev.irq, nth);
-      continue;
-    }
-
     if (virtio_mmio_init_queue(&d->dev, VIRTIO_INPUT_QUEUE_EVENT, INPUT_NUM_DESC) < 0) continue;
 
     for (int i = 0; i < INPUT_NUM_DESC; i++) {
@@ -132,7 +102,7 @@ int virtio_input_init(void) {
     virtio_mmio_set_driver_ok(&d->dev);
     d->ready = 1;
     g_in.dev_count++;
-    printf("  VirtIO keyboard initialized (irq=%d, idx=%d)\n", d->dev.irq, nth);
+    printf("  VirtIO input device initialized (irq=%d, idx=%d)\n", d->dev.irq, nth);
   }
 
   if (g_in.dev_count == 0) {

@@ -26,4 +26,8 @@ void virtio_gpu_poll(void);
 int virtio_gpu_match_irq(int irq);
 void virtio_gpu_handle_irq(void);
 
+int virtio_gpu_is_desktop_proc(void);
+int virtio_gpu_shadow_fb_page(uint64_t offset, uint64_t *pa);
+int virtio_gpu_child_fb_page(int child_idx, uint64_t offset, uint64_t *pa);
+
 #endif

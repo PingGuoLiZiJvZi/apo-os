@@ -3,6 +3,7 @@
 #include "../device/device.h"
 #include "../fs/fs.h"
 #include "../libc/string.h"
+#include "system.h"
 
 #define USER_COPY_CHUNK 4096
 #define MAX_PATH_LEN 256
@@ -711,6 +712,14 @@ Context* syscall_handler(Context *c) {
             return c;
         case SYS_gettimeofday:
             c->GPRx = sys_gettimeofday(c);
+            return c;
+        case SYS_shutdown:
+            shutdown();
+            c->GPRx = 0;
+            return c;
+        case SYS_reboot:
+            reboot();
+            c->GPRx = 0;
             return c;
         default:
             printf("unhandled syscall id=%d\n", syscall_id);

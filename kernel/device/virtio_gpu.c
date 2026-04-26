@@ -5,6 +5,7 @@
 #include "../libc/stdio.h"
 #include "../libc/string.h"
 #include "../memory/memory.h"
+#include "../proc/proc.h"
 
 #define VIRTIO_ID_GPU 16
 #define VIRTIO_GPU_QUEUE_CTRL 0
@@ -517,4 +518,38 @@ void virtio_gpu_handle_irq(void)
   if (!g_gpu.ready)
     return;
   virtio_ack_interrupt(&g_gpu.dev);
+}
+
+int virtio_gpu_is_desktop_proc(void) {
+  return (current_proc == &PCBs[0]);
+}
+
+
+int virtio_gpu_shadow_fb_page(uint64_t offset, uint64_t *pa) {
+  if (!g_gpu.ready || !pa) return -1;
+  if ((offset % PAGE_SIZE) != 0) return -1;
+  if (offset >= virtio_gpu_fb_size()) return -1;
+
+  if (current_proc->shadow_fb_npages <= 0)
+    current_proc->shadow_fb_npages = g_gpu.pages;
+
+  uint64_t page_idx = offset / PAGE_SIZE;
+  if (page_idx >= (uint64_t)current_proc->shadow_fb_npages) return -1;
+  *pa = (uint64_t)&current_proc->shadow_fb_pages[page_idx];
+  return 0;
+}
+
+int virtio_gpu_child_fb_page(int child_idx, uint64_t offset, uint64_t *pa) {
+  if (!g_gpu.ready || !pa) return -1;
+  if (child_idx < 0 || child_idx >= MAX_PROCS) return -1;
+  if ((offset % PAGE_SIZE) != 0) return -1;
+  if (offset >= virtio_gpu_fb_size()) return -1;
+
+  PCB *child = &PCBs[child_idx];
+  if (child->shadow_fb_npages <= 0) return -1;
+
+  uint64_t page_idx = offset / PAGE_SIZE;
+  if (page_idx >= (uint64_t)child->shadow_fb_npages) return -1;
+  *pa = (uint64_t)&child->shadow_fb_pages[page_idx];
+  return 0;
 }

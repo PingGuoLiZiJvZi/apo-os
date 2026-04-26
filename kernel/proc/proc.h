@@ -42,6 +42,10 @@ typedef struct PCB {
     int proc_state;
     int exit_status;
     uint64_t sleep_deadline;
+
+    char shadow_fb_pages[512][PAGE_SIZE]; // physical pages (max 512 = 2MB)
+    int   shadow_fb_npages;     // number of allocated pages
+    uint8_t fb_dirty;           // set by fbsync, read/cleared by desktop
 } PCB;
 // pid is the order in the PCBs array, i.e. &PCBs[pid] is the PCB for pid
 extern PCB PCBs[MAX_PROCS];
