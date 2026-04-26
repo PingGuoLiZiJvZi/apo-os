@@ -1,11 +1,7 @@
 #include "desktop.h"
 
-const AppEntry apps[APP_COUNT] = {
-    {"P", "PAL",          "/bin/pal",   NULL,                        0x00e06060, 640, 400, 1},
-    {"B", "Flappy Bird",  "/bin/bird",  NULL,                        0x0060c060, 287, 300, 1},
-    {"M", "Mario",        "/bin/fceux", "/share/games/nes/mario.nes", 0x006080e0, 256, 240, 1},
-    {"S", "Snake",        "/bin/snake", NULL,                        0x00c0c040, 256, 192, 0},
-};
+AppEntry apps[MAX_APPS];
+int num_apps = 0;
 int screen_w, screen_h;
 uint32_t *real_fb;
 int fb_pitch;

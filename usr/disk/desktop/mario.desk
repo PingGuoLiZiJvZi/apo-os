@@ -1,0 +1,8 @@
+type=exec
+icon=/share/desktop/icon-mario.bmp
+path=/bin/fceux
+arg=/share/games/nes/mario.nes
+w=256
+l=240
+centered=1
+name=mario

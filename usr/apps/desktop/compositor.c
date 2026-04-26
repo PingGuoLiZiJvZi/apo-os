@@ -34,6 +34,7 @@ void render_damage(Rect *damage, int damage_count) {
         if (clip.w <= 0 || clip.h <= 0) continue;
 
         draw_background_rect(clip);
+        draw_desktop_icons_clipped(clip);
 
         for (int i = 0; i < num_windows; i++) {
             Window *w = &windows[i];
@@ -65,6 +66,7 @@ void render_frame(int full_redraw) {
 
     if (full_redraw) {
         draw_background();
+        draw_desktop_icons();
     }
 
     render_windows();

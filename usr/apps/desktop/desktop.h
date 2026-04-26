@@ -25,7 +25,12 @@ extern void sys_reboot(void);
 #define ICON_SIZE      24
 #define ICON_GAP       12
 #define MAX_WINDOWS    7
-#define APP_COUNT      4
+#define MAX_APPS       16
+#define APP_TITLE_MAX  32
+#define APP_PATH_MAX   128
+#define DESKTOP_ICON_SIZE   48
+#define DESKTOP_ICON_CELL_W 88
+#define DESKTOP_ICON_CELL_H 78
 #define FBSYNC_MAX_PROCS 8
 #define CURSOR_W       12
 #define CURSOR_H       18
@@ -38,14 +43,24 @@ extern void sys_reboot(void);
 #define KEY_MOUSE_LEFT 272
 
 typedef struct {
-    const char *label;
-    const char *title;
-    const char *path;
-    const char *arg1;
+    int x, y, w, h;
+} Rect;
+
+typedef struct {
+    char title[APP_TITLE_MAX];
+    char path[APP_PATH_MAX];
+    char arg1[APP_PATH_MAX];
+    char icon_path[APP_PATH_MAX];
     uint32_t color;
     int pref_w;
     int pref_h;
     int centered;
+    int has_arg;
+    uint32_t *icon_pixels;
+    int icon_w;
+    int icon_h;
+    Rect icon_rect;
+    Rect cell_rect;
 } AppEntry;
 
 typedef struct {
@@ -63,10 +78,6 @@ typedef struct {
 } Window;
 
 typedef struct {
-    int x, y, w, h;
-} Rect;
-
-typedef struct {
     int32_t x;
     int32_t y;
     int32_t w;
@@ -79,7 +90,8 @@ typedef struct {
     GpuDirtyRect rects[FBSYNC_MAX_PROCS];
 } FbSyncInfo;
 
-extern const AppEntry apps[APP_COUNT];
+extern AppEntry apps[MAX_APPS];
+extern int num_apps;
 
 extern int screen_w, screen_h;
 extern uint32_t *real_fb;
@@ -123,6 +135,8 @@ void focus_top_window_or_desktop(void);
 
 void draw_background(void);
 void draw_background_rect(Rect r);
+void draw_desktop_icons(void);
+void draw_desktop_icons_clipped(Rect clip);
 void draw_taskbar(void);
 void draw_window_decoration(Window *w);
 void composite_window(Window *w);
@@ -137,9 +151,10 @@ int poll_events(int *out_key, int *out_key_type,
 
 int mmap_child_fb(int pcb_idx);
 int launch_app(const AppEntry *app);
+void load_desktop_apps(void);
 void close_window(Window *w);
 int reap_children(void);
-int hit_taskbar_app(int mx, int my);
+int hit_desktop_app(int mx, int my);
 int hit_taskbar_power(int mx, int my);
 int hit_window(int mx, int my, int *hit_close, int *hit_titlebar);
 uint8_t poll_dirty(int *layout_dirty, Rect *damage, int *damage_count);

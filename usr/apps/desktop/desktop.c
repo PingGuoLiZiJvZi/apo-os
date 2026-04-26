@@ -37,6 +37,7 @@ int main(int argc, char *argv[]) {
     /* Initialize windows */
     memset(windows, 0, sizeof(windows));
     num_windows = 0;
+    load_desktop_apps();
 
     printf("[desktop] ready\n");
     run_boot_intro();
@@ -102,14 +103,6 @@ int main(int argc, char *argv[]) {
             if (key_type == 1 && key == KEY_MOUSE_LEFT) {
                 mouse_btn_left = 1;
 
-                /* Check hits */
-                int app_idx = hit_taskbar_app(mouse_x, mouse_y);
-                if (app_idx >= 0) {
-                    launch_app(&apps[app_idx]);
-                    ui_dirty = 1;
-                    continue;
-                }
-
                 int power = hit_taskbar_power(mouse_x, mouse_y);
                 if (power == 0) {
                     printf("[desktop] shutdown requested\n");
@@ -151,8 +144,14 @@ int main(int argc, char *argv[]) {
                         ui_dirty = 1;
                     }
                 } else {
-                    set_focus_pid(1);
-                    ui_dirty = 1;
+                    int app_idx = hit_desktop_app(mouse_x, mouse_y);
+                    if (app_idx >= 0) {
+                        launch_app(&apps[app_idx]);
+                        ui_dirty = 1;
+                    } else {
+                        set_focus_pid(1);
+                        ui_dirty = 1;
+                    }
                 }
             }
 

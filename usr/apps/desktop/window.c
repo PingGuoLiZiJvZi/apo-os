@@ -55,7 +55,7 @@ int launch_app(const AppEntry *app) {
     }
     if (pid == 0) {
         /* Child process */
-        if (app->arg1) {
+        if (app->has_arg) {
             char *argv[] = {(char *)app->path, (char *)app->arg1, NULL};
             char *envp[] = {NULL};
             execve(app->path, argv, envp);
@@ -157,20 +157,6 @@ int reap_children(void) {
 }
 
 /* ---- Hit testing ---- */
-
-int hit_taskbar_app(int mx, int my) {
-    int ty = screen_h - TASKBAR_H;
-    if (my < ty || my >= screen_h) return -1;
-    int iy = ty + (TASKBAR_H - ICON_SIZE) / 2;
-    if (my < iy || my >= iy + ICON_SIZE) return -1;
-
-    int ix = ICON_GAP;
-    for (int i = 0; i < APP_COUNT; i++) {
-        if (mx >= ix && mx < ix + ICON_SIZE) return i;
-        ix += ICON_SIZE + ICON_GAP;
-    }
-    return -1;
-}
 
 /* Returns: 0 = shutdown, 1 = reboot, -1 = no hit */
 int hit_taskbar_power(int mx, int my) {

@@ -1,0 +1,7 @@
+type=exec
+icon=/share/desktop/icon-bird.bmp
+path=/bin/bird
+w=287
+l=300
+centered=1
+name=bird

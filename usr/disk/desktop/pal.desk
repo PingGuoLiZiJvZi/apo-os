@@ -1,0 +1,8 @@
+type=exec
+icon=/share/desktop/icon-pal.bmp
+path=/bin/pal
+arg=NULL
+w=640
+l=400
+centered=1
+name=pal

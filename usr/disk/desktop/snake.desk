@@ -1,0 +1,6 @@
+type=exec
+icon=/share/desktop/icon-snake.bmp
+path=/bin/snake
+w=256
+l=192
+name=snake
