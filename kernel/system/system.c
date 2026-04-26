@@ -1,6 +1,7 @@
 #include "system.h"
 #include "../main/sbi.h"
 #include "../libc/stdio.h"
+#include "../disk/disk.h"
 
 void panic(const char *msg)
 {
@@ -16,6 +17,7 @@ void panic(const char *msg)
 void shutdown()
 {
     printf("Shutting down...\n");
+    disk_flush();
     sbi_system_reset(SBI_SRST_RESET_TYPE_SHUTDOWN,
                      SBI_SRST_RESET_REASON_NONE);
 
@@ -26,6 +28,7 @@ void shutdown()
 void reboot()
 {
     printf("Rebooting...\n");
+    disk_flush();
     sbi_system_reset(SBI_SRST_RESET_TYPE_COLD_REBOOT,
                      SBI_SRST_RESET_REASON_NONE);
 

@@ -39,7 +39,7 @@ int writei(Inode *ip, char *src, uint32_t off, uint32_t n, uint32_t inum) {
                 indirect_buf[block_idx - NDIRECT] = disk_block; 
                 disk_write(ip->addrs[SINDIRECT_IDX], (char*)indirect_buf);
             }
-        } else if (block_idx < MAXFILE) {
+        } else if (block_idx < NDIRECT + NINDIRECT + NDINDIRECT) {
             uint32_t doubly_idx = block_idx - NDIRECT - NINDIRECT;
             uint32_t level1_idx = doubly_idx / NINDIRECT;
             uint32_t level2_idx = doubly_idx % NINDIRECT;

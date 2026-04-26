@@ -43,6 +43,9 @@
 
 #define NUM_DESC 8
 
+#define DISK_CACHE_BYTES  (64 * 1024)
+#define DISK_CACHE_BLOCKS (DISK_CACHE_BYTES / BLOCK_SIZE)
+
 // descriptor flags
 #define VRING_DESC_F_NEXT     1  // buffer continues via 'next'
 #define VRING_DESC_F_WRITE    2  // device-writable
@@ -88,6 +91,17 @@ static struct {
 
 static uint64_t virtio_base;
 
+typedef struct {
+    int valid;
+    int dirty;
+    size_t block_no;
+    uint64_t last_used;
+    uint8_t data[BLOCK_SIZE];
+} DiskCacheBlock;
+
+static DiskCacheBlock block_cache[DISK_CACHE_BLOCKS];
+static uint64_t block_cache_clock;
+
 static inline void     mmio_w32(uint64_t off, uint32_t v) { *(volatile uint32_t *)(virtio_base + off) = v; }
 static inline uint32_t mmio_r32(uint64_t off)             { return *(volatile uint32_t *)(virtio_base + off); }
 
@@ -100,6 +114,12 @@ static int alloc_desc(void)
         }
     }
     return -1;
+}
+
+static void disk_cache_init(void)
+{
+    memset(block_cache, 0, sizeof(block_cache));
+    block_cache_clock = 0;
 }
 
 static void free_desc(int i)
@@ -194,6 +214,8 @@ void init_disk(void)
 
     printf("  VirtIO block device initialized (queue_num=%d, page=0x%lx)\n",
            NUM_DESC, (uint64_t)buf);
+
+    disk_cache_init();
 }
 
 // request header & status (single-threaded, one set is enough)
@@ -261,14 +283,103 @@ static size_t virtio_blk_rw(size_t block_no, void *buf, int write)
     return BLOCK_SIZE;
 }
 
+static DiskCacheBlock *cache_lookup(size_t block_no)
+{
+    for (int i = 0; i < DISK_CACHE_BLOCKS; i++) {
+        if (block_cache[i].valid && block_cache[i].block_no == block_no) {
+            return &block_cache[i];
+        }
+    }
+    return 0;
+}
+
+static void cache_touch(DiskCacheBlock *entry)
+{
+    entry->last_used = ++block_cache_clock;
+}
+
+static void cache_flush_entry(DiskCacheBlock *entry)
+{
+    if (!entry->valid || !entry->dirty) {
+        return;
+    }
+    if (virtio_blk_rw(entry->block_no, entry->data, 1) != BLOCK_SIZE) {
+        panic("disk cache: flush failed");
+    }
+    entry->dirty = 0;
+}
+
+static DiskCacheBlock *cache_alloc_entry(void)
+{
+    DiskCacheBlock *victim = 0;
+
+    for (int i = 0; i < DISK_CACHE_BLOCKS; i++) {
+        if (!block_cache[i].valid) {
+            return &block_cache[i];
+        }
+        if (victim == 0 || block_cache[i].last_used < victim->last_used) {
+            victim = &block_cache[i];
+        }
+    }
+
+    cache_flush_entry(victim);
+    victim->valid = 0;
+    victim->dirty = 0;
+    return victim;
+}
+
+static DiskCacheBlock *cache_load_entry(size_t block_no)
+{
+    DiskCacheBlock *entry = cache_lookup(block_no);
+    if (entry) {
+        cache_touch(entry);
+        return entry;
+    }
+
+    entry = cache_alloc_entry();
+    if (virtio_blk_rw(block_no, entry->data, 0) != BLOCK_SIZE) {
+        entry->valid = 0;
+        entry->dirty = 0;
+        return 0;
+    }
+
+    entry->valid = 1;
+    entry->dirty = 0;
+    entry->block_no = block_no;
+    cache_touch(entry);
+    return entry;
+}
+
 size_t disk_read(size_t block_no, void *buf)
 {
-    return virtio_blk_rw(block_no, buf, 0);
+    DiskCacheBlock *entry = cache_load_entry(block_no);
+    if (!entry) {
+        return 0;
+    }
+    memcpy(buf, entry->data, BLOCK_SIZE);
+    return BLOCK_SIZE;
 }
 
 size_t disk_write(size_t block_no, void *buf)
 {
-    return virtio_blk_rw(block_no, buf, 1);
+    DiskCacheBlock *entry = cache_lookup(block_no);
+    if (!entry) {
+        entry = cache_alloc_entry();
+        entry->valid = 1;
+        entry->block_no = block_no;
+    }
+
+    memcpy(entry->data, buf, BLOCK_SIZE);
+    entry->dirty = 1;
+    cache_touch(entry);
+    return BLOCK_SIZE;
+}
+
+void disk_flush(void)
+{
+    for (int i = 0; i < DISK_CACHE_BLOCKS; i++) {
+        cache_flush_entry(&block_cache[i]);
+    }
 }
 void disk_test()    
 {
