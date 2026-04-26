@@ -26,6 +26,7 @@ static void reset_pcb_slot(PCB *pcb) {
     pcb->as.end = 0;
     pcb->as.pgtable = 0;
     pcb->max_brk = 0;
+    pcb->mmap_base = 0;
     for (int i = 0; i < MAX_FD; i++) {
         pcb->fd_table[i] = 0;
     }
@@ -190,7 +191,9 @@ static void freewalk_level(uint64_t *pagetable, int level) {
         if (level > 0 && !(pte & (PTE_R | PTE_W | PTE_X))) {
             freewalk_level((uint64_t *)PTE2PA(pte), level - 1);
         } else {
-            kfree((void *)PTE2PA(pte));
+            if (!(pte & PTE_SHARED)) {
+                kfree((void *)PTE2PA(pte));
+            }
         }
         pagetable[i] = 0;
     }
@@ -227,6 +230,7 @@ void proc_exec_reclaim(PCB *pcb) {
         free_user_pages(&pcb->as);
     }
     pcb->max_brk = 0;
+    pcb->mmap_base = 0;
 }
 
 static void terminate_proc(PCB *pcb, int status) {
@@ -246,6 +250,7 @@ static void terminate_proc(PCB *pcb, int status) {
     }
 
     pcb->max_brk = 0;
+    pcb->mmap_base = 0;
     pcb->sleep_deadline = 0;
     pcb->cp = 0;
     pcb->exit_status = status;
@@ -273,10 +278,16 @@ static int clone_user_pages(PCB *parent, PCB *child) {
         if (!(*pte & (PTE_R | PTE_W | PTE_X))) continue;
 
         uint64_t pa = PTE2PA(*pte);
+        uint64_t perm = *pte & (PTE_R | PTE_W | PTE_X | PTE_U | PTE_SHARED);
+        if (*pte & PTE_SHARED) {
+            if (map_pages(child->as.pgtable, va, pa, PAGE_SIZE, perm) != 0) {
+                return -1;
+            }
+            continue;
+        }
+
         void *newpa = new_page(1);
         memcpy(newpa, (void *)pa, PAGE_SIZE);
-
-        uint64_t perm = *pte & (PTE_R | PTE_W | PTE_X | PTE_U);
         if (map_pages(child->as.pgtable, va, (uint64_t)newpa, PAGE_SIZE, perm) != 0) {
             return -1;
         }
@@ -304,6 +315,7 @@ int proc_fork_current(Context *parent_ctx) {
 
     protect(&child->as);
     child->max_brk = parent->max_brk;
+    child->mmap_base = parent->mmap_base;
     child->parent_pid = parent_pid;
     child->proc_state = RUNNING_PROC;
     child->exit_status = 0;

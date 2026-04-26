@@ -34,6 +34,7 @@ typedef struct PCB {
     Context *cp;          // pointer to saved context (top of kstack)
     AddrSpace as;
     uintptr_t max_brk;
+    uintptr_t mmap_base;
     char stack[KSTACK_PAGENUM * PAGE_SIZE];
     File *fd_table[MAX_FD];
     int sub_procs[MAX_SUB_PROCS]; 

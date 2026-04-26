@@ -94,6 +94,8 @@ int fs_stat_file(File *f, Stat *st);
 int fs_stat_path(const char *path, Stat *st);
 int fs_ioctl(File *f, uint64_t req, uint64_t arg);
 int fs_poll_file(File *f, int events);
+uint64_t fs_mmap_size(File *f);
+int fs_mmap_page(File *f, uint64_t offset, uint64_t *pa);
 
 // File* fs_create(const char *path, uint16_t type);
 // int fs_unlink(const char *path);      

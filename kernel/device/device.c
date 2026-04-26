@@ -160,6 +160,11 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
     }
 
     if (strcmp(name, "fbsync") == 0) {
+        if (n >= sizeof(GpuDirtyRect) && (n % sizeof(GpuDirtyRect)) == 0) {
+            if (virtio_gpu_fbdirty_rects((const GpuDirtyRect *)buf, n / sizeof(GpuDirtyRect)) < 0) {
+                return -1;
+            }
+        }
         if (virtio_gpu_fbsync() < 0) return -1;
         if (off) *off += (uint32_t)n;
         return (int)n;
@@ -203,6 +208,18 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
         uart_putchar(p[i]);
     }
     return (int)n;
+}
+
+uint64_t device_mmap_size(const char *name) {
+    if (!name) return 0;
+    if (strcmp(name, "fb") == 0) return virtio_gpu_fb_size();
+    return 0;
+}
+
+int device_mmap_page(const char *name, uint64_t offset, uint64_t *pa) {
+    if (!name || !pa) return -1;
+    if (strcmp(name, "fb") == 0) return virtio_gpu_fb_page(offset, pa);
+    return -1;
 }
 
 void device_poll() {

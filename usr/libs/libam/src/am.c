@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -13,6 +14,14 @@ Area heap = {0};
 
 #define KEYDOWN_MASK 0x8000
 #define KEY_QUEUE_LEN 128
+#define GPU_DIRTY_QUEUE_LEN 64
+
+typedef struct {
+  int32_t x;
+  int32_t y;
+  int32_t w;
+  int32_t h;
+} GpuDirtyRect;
 
 static int g_inited = 0;
 static int g_evfd = -1;
@@ -22,6 +31,10 @@ static int g_audiofd = -1;
 static int g_serialfd = -1;
 static int g_screen_w = 640;
 static int g_screen_h = 480;
+static uint32_t *g_fbmem = NULL;
+static size_t g_fbmem_size = 0;
+static GpuDirtyRect g_dirty_rects[GPU_DIRTY_QUEUE_LEN];
+static int g_dirty_count = 0;
 static uint64_t g_boot_us = 0;
 static int g_key_queue[KEY_QUEUE_LEN];
 static int g_key_head = 0;
@@ -208,6 +221,102 @@ static void parse_dispinfo(void) {
   close(infofd);
 }
 
+static int gpu_rect_x2(const GpuDirtyRect *r) {
+  return r->x + r->w;
+}
+
+static int gpu_rect_y2(const GpuDirtyRect *r) {
+  return r->y + r->h;
+}
+
+static int gpu_rect_contains(const GpuDirtyRect *a, const GpuDirtyRect *b) {
+  return a->x <= b->x && a->y <= b->y &&
+         gpu_rect_x2(a) >= gpu_rect_x2(b) && gpu_rect_y2(a) >= gpu_rect_y2(b);
+}
+
+static int gpu_rect_touch_or_overlap(const GpuDirtyRect *a, const GpuDirtyRect *b) {
+  return a->x <= gpu_rect_x2(b) && gpu_rect_x2(a) >= b->x &&
+         a->y <= gpu_rect_y2(b) && gpu_rect_y2(a) >= b->y;
+}
+
+static void gpu_rect_union_into(GpuDirtyRect *dst, const GpuDirtyRect *src) {
+  int x1 = dst->x < src->x ? dst->x : src->x;
+  int y1 = dst->y < src->y ? dst->y : src->y;
+  int x2 = gpu_rect_x2(dst) > gpu_rect_x2(src) ? gpu_rect_x2(dst) : gpu_rect_x2(src);
+  int y2 = gpu_rect_y2(dst) > gpu_rect_y2(src) ? gpu_rect_y2(dst) : gpu_rect_y2(src);
+  dst->x = x1;
+  dst->y = y1;
+  dst->w = x2 - x1;
+  dst->h = y2 - y1;
+}
+
+static void gpu_dirty_collapse(void) {
+  if (g_dirty_count <= 1) return;
+  for (int i = 1; i < g_dirty_count; i++) {
+    gpu_rect_union_into(&g_dirty_rects[0], &g_dirty_rects[i]);
+  }
+  g_dirty_count = 1;
+}
+
+static void gpu_dirty_add(int x, int y, int w, int h) {
+  int x1 = x;
+  int y1 = y;
+  int x2 = x + w;
+  int y2 = y + h;
+  if (x1 < 0) x1 = 0;
+  if (y1 < 0) y1 = 0;
+  if (x2 > g_screen_w) x2 = g_screen_w;
+  if (y2 > g_screen_h) y2 = g_screen_h;
+  if (x1 >= x2 || y1 >= y2) return;
+
+  GpuDirtyRect nr = { x1, y1, x2 - x1, y2 - y1 };
+  for (int i = 0; i < g_dirty_count; i++) {
+    if (gpu_rect_contains(&g_dirty_rects[i], &nr)) return;
+    if (gpu_rect_contains(&nr, &g_dirty_rects[i]) ||
+        gpu_rect_touch_or_overlap(&g_dirty_rects[i], &nr)) {
+      gpu_rect_union_into(&g_dirty_rects[i], &nr);
+      for (int j = 0; j < g_dirty_count; j++) {
+        if (j == i) continue;
+        if (!gpu_rect_touch_or_overlap(&g_dirty_rects[i], &g_dirty_rects[j])) continue;
+        gpu_rect_union_into(&g_dirty_rects[i], &g_dirty_rects[j]);
+        g_dirty_rects[j] = g_dirty_rects[g_dirty_count - 1];
+        g_dirty_count--;
+        j--;
+      }
+      return;
+    }
+  }
+
+  if (g_dirty_count < GPU_DIRTY_QUEUE_LEN) {
+    g_dirty_rects[g_dirty_count++] = nr;
+    return;
+  }
+
+  gpu_rect_union_into(&g_dirty_rects[0], &nr);
+  gpu_dirty_collapse();
+}
+
+static void gpu_map_fb(void) {
+  if (g_fbmem || g_fbfd < 0 || g_screen_w <= 0 || g_screen_h <= 0) return;
+  size_t size = (size_t)g_screen_w * (size_t)g_screen_h * sizeof(uint32_t);
+  void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, g_fbfd, 0);
+  if (p == MAP_FAILED) return;
+  g_fbmem = (uint32_t *)p;
+  g_fbmem_size = size;
+}
+
+static void gpu_sync(void) {
+  if (g_fbsyncfd < 0) return;
+  if (g_dirty_count > 0) {
+    size_t bytes = (size_t)g_dirty_count * sizeof(g_dirty_rects[0]);
+    int n = write(g_fbsyncfd, g_dirty_rects, bytes);
+    if (n == (int)bytes) g_dirty_count = 0;
+    return;
+  }
+  char ch = 0;
+  write(g_fbsyncfd, &ch, 1);
+}
+
 void putch(char ch) {
   write(1, &ch, 1);
 }
@@ -220,12 +329,13 @@ bool ioe_init(void) {
   if (g_inited) return true;
 
   g_evfd = open("/device/events", O_RDONLY, 0);
-  g_fbfd = open("/device/fb", O_WRONLY, 0);
+  g_fbfd = open("/device/fb", O_RDWR, 0);
   g_fbsyncfd = open("/device/fbsync", O_WRONLY, 0);
   g_audiofd = open("/device/audio", O_WRONLY, 0);
   g_serialfd = open("/device/serial", O_RDONLY, 0);
 
   parse_dispinfo();
+  gpu_map_fb();
   g_boot_us = now_us();
   g_audio_last_us = g_boot_us;
   g_key_head = g_key_tail = 0;
@@ -317,19 +427,48 @@ static void am_gpu_status(void *buf) {
 static void am_gpu_fbdraw(void *buf) {
   AM_GPU_FBDRAW_T *ctl = (AM_GPU_FBDRAW_T *)buf;
   if (g_fbfd >= 0 && ctl->pixels && ctl->w > 0 && ctl->h > 0) {
-    uint8_t *pixels = (uint8_t *)ctl->pixels;
-    for (int row = 0; row < ctl->h; row++) {
-      off_t off = (off_t)(((ctl->y + row) * g_screen_w + ctl->x) * 4);
-      if (lseek(g_fbfd, off, SEEK_SET) < 0) return;
-      int len = ctl->w * 4;
-      write(g_fbfd, pixels + row * len, (size_t)len);
+    gpu_map_fb();
+
+    int px = ctl->x;
+    int py = ctl->y;
+    int copy_w = ctl->w;
+    int copy_h = ctl->h;
+    int src_x = 0;
+    int src_y = 0;
+    if (px < 0) {
+      src_x = -px;
+      copy_w += px;
+      px = 0;
+    }
+    if (py < 0) {
+      src_y = -py;
+      copy_h += py;
+      py = 0;
+    }
+    if (px + copy_w > g_screen_w) copy_w = g_screen_w - px;
+    if (py + copy_h > g_screen_h) copy_h = g_screen_h - py;
+
+    if (copy_w > 0 && copy_h > 0) {
+      uint32_t *pixels = (uint32_t *)ctl->pixels;
+      if (g_fbmem) {
+        for (int row = 0; row < copy_h; row++) {
+          uint32_t *dst = g_fbmem + (py + row) * g_screen_w + px;
+          uint32_t *src = pixels + (src_y + row) * ctl->w + src_x;
+          memcpy(dst, src, (size_t)copy_w * sizeof(uint32_t));
+        }
+        gpu_dirty_add(px, py, copy_w, copy_h);
+      } else {
+        for (int row = 0; row < copy_h; row++) {
+          off_t off = (off_t)(((py + row) * g_screen_w + px) * 4);
+          if (lseek(g_fbfd, off, SEEK_SET) < 0) return;
+          uint32_t *src = pixels + (src_y + row) * ctl->w + src_x;
+          write(g_fbfd, src, (size_t)copy_w * sizeof(uint32_t));
+        }
+      }
     }
   }
 
-  if (ctl->sync && g_fbsyncfd >= 0) {
-    char ch = 0;
-    write(g_fbsyncfd, &ch, 1);
-  }
+  if (ctl->sync) gpu_sync();
 }
 
 static void am_audio_config(void *buf) {

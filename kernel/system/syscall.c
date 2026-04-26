@@ -56,6 +56,23 @@ typedef struct {
     uint64_t offset;
 } KMmapReq;
 
+#define KPROT_READ  0x1
+#define KPROT_WRITE 0x2
+#define KPROT_EXEC  0x4
+
+static uint64_t mmap_pte_perm(int prot, int shared) {
+    uint64_t perm = PTE_U;
+    if (prot == 0) {
+        perm |= PTE_R | PTE_W;
+    } else {
+        if (prot & KPROT_READ) perm |= PTE_R;
+        if (prot & KPROT_WRITE) perm |= PTE_R | PTE_W;
+        if (prot & KPROT_EXEC) perm |= PTE_X;
+    }
+    if (shared) perm |= PTE_SHARED;
+    return perm;
+}
+
 static inline void user_access_begin(Context *c, uint64_t *old_satp, uint64_t *old_sstatus) {
     asm volatile("csrr %0, satp" : "=r"(*old_satp));
     asm volatile("csrw satp, %0" : : "r"((uint64_t)c->pdir));
@@ -445,31 +462,74 @@ static int64_t sys_mmap(Context *c) {
     KMmapReq req;
     if (copy_from_user(c, &req, (uintptr_t)c->GPR2, sizeof(req)) < 0) return -1;
     if (req.len == 0) return -1;
-    if (req.fd >= 0) return -1;
+    if ((req.offset % PAGE_SIZE) != 0) return -1;
+
+    uintptr_t map_len = ROUNDUP(req.len, PAGE_SIZE);
+    if (map_len == 0) return -1;
 
     uintptr_t base = (uintptr_t)req.addr;
     if (base == 0) {
-        base = ROUNDUP(current_proc->max_brk, PAGE_SIZE);
-        if (base < (uintptr_t)current_proc->as.start) {
-            base = ROUNDUP((uintptr_t)current_proc->as.start, PAGE_SIZE);
+        if (current_proc->mmap_base == 0) {
+            current_proc->mmap_base = (uintptr_t)current_proc->as.end - KSTACK_PAGENUM * PAGE_SIZE;
         }
+        if (current_proc->mmap_base < map_len) return -1;
+        base = (current_proc->mmap_base - map_len) & ~(uintptr_t)(PAGE_SIZE - 1);
+        if (base < current_proc->max_brk || base < (uintptr_t)current_proc->as.start) return -1;
+        current_proc->mmap_base = base;
     } else {
         base = ROUNDUP(base, PAGE_SIZE);
     }
 
-    uintptr_t end = ROUNDUP(base + req.len, PAGE_SIZE);
-    for (uintptr_t va = base; va < end; va += PAGE_SIZE) {
-        void *page = new_page(1);
-        map(&current_proc->as, (void *)va, page, 0);
+    uintptr_t end = base + map_len;
+    if (end <= base || end > (uintptr_t)current_proc->as.end) return -1;
+
+    if (req.fd >= 0) {
+        File *f = get_fd_file(current_proc, req.fd);
+        if (!f) return -1;
+
+        uint64_t size = fs_mmap_size(f);
+        if (size == 0 || req.offset >= size) return -1;
+        if (req.len > size - req.offset) return -1;
+
+        uint64_t perm = mmap_pte_perm(req.prot, 1);
+        uint64_t off = req.offset;
+        for (uintptr_t va = base; va < end; va += PAGE_SIZE, off += PAGE_SIZE) {
+            uint64_t pa = 0;
+            if (fs_mmap_page(f, off, &pa) < 0) return -1;
+            if (map_pages(current_proc->as.pgtable, va, pa, PAGE_SIZE, perm) != 0) return -1;
+        }
+    } else {
+        uint64_t perm = mmap_pte_perm(req.prot, 0);
+        for (uintptr_t va = base; va < end; va += PAGE_SIZE) {
+            void *page = new_page(1);
+            if (map_pages(current_proc->as.pgtable, va, (uint64_t)page, PAGE_SIZE, perm) != 0) return -1;
+        }
     }
-    if (end > current_proc->max_brk) {
-        current_proc->max_brk = end;
-    }
+
     return (int64_t)base;
 }
 
 static int sys_munmap(Context *c) {
-    (void)c;
+    uintptr_t addr = (uintptr_t)c->GPR2;
+    size_t len = (size_t)c->GPR3;
+    if (addr == 0 || len == 0) return -1;
+
+    uintptr_t base = addr & ~(uintptr_t)(PAGE_SIZE - 1);
+    uintptr_t end = ROUNDUP(addr + len, PAGE_SIZE);
+    if (end <= base) return -1;
+    if (base < (uintptr_t)current_proc->as.start || end > (uintptr_t)current_proc->as.end) return -1;
+
+    for (uintptr_t va = base; va < end; va += PAGE_SIZE) {
+        uint64_t *pte = walk(current_proc->as.pgtable, va, 0);
+        if (!pte || !(*pte & PTE_V)) continue;
+        if (!(*pte & (PTE_R | PTE_W | PTE_X))) return -1;
+
+        if (!(*pte & PTE_SHARED)) {
+            kfree((void *)PTE2PA(*pte));
+        }
+        *pte = 0;
+    }
+    asm volatile("sfence.vma");
     return 0;
 }
 

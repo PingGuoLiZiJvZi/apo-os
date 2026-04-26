@@ -408,3 +408,14 @@ int fs_poll_file(File *f, int events) {
     return revents;
 }
 
+uint64_t fs_mmap_size(File *f) {
+    if (!f) return 0;
+    if (f->type == DEVICE_FILE) return device_mmap_size(f->name);
+    return 0;
+}
+
+int fs_mmap_page(File *f, uint64_t offset, uint64_t *pa) {
+    if (!f || !pa) return -1;
+    if (f->type == DEVICE_FILE) return device_mmap_page(f->name, offset, pa);
+    return -1;
+}

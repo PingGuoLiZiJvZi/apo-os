@@ -9,23 +9,25 @@
 #define VIRTIO_ID_GPU 16
 #define VIRTIO_GPU_QUEUE_CTRL 0
 
-#define VIRTIO_GPU_CMD_GET_DISPLAY_INFO      0x0100
-#define VIRTIO_GPU_CMD_RESOURCE_CREATE_2D    0x0101
-#define VIRTIO_GPU_CMD_RESOURCE_UNREF         0x0102
-#define VIRTIO_GPU_CMD_SET_SCANOUT           0x0103
-#define VIRTIO_GPU_CMD_RESOURCE_FLUSH        0x0104
-#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D   0x0105
+#define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
+#define VIRTIO_GPU_CMD_RESOURCE_CREATE_2D 0x0101
+#define VIRTIO_GPU_CMD_RESOURCE_UNREF 0x0102
+#define VIRTIO_GPU_CMD_SET_SCANOUT 0x0103
+#define VIRTIO_GPU_CMD_RESOURCE_FLUSH 0x0104
+#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D 0x0105
 #define VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING 0x0106
 
-#define VIRTIO_GPU_RESP_OK_NODATA            0x1100
-#define VIRTIO_GPU_RESP_OK_DISPLAY_INFO      0x1101
+#define VIRTIO_GPU_RESP_OK_NODATA 0x1100
+#define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1101
 
-#define VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM     1
+#define VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM 1
 
 #define GPU_NUM_DESC 8
 #define GPU_RESOURCE_ID 1
+#define GPU_MAX_DIRTY_RECTS 64
 
-struct virtio_gpu_ctrl_hdr {
+struct virtio_gpu_ctrl_hdr
+{
   uint32_t type;
   uint32_t flags;
   uint64_t fence_id;
@@ -33,25 +35,29 @@ struct virtio_gpu_ctrl_hdr {
   uint32_t padding;
 };
 
-struct virtio_gpu_rect {
+struct virtio_gpu_rect
+{
   uint32_t x;
   uint32_t y;
   uint32_t width;
   uint32_t height;
 };
 
-struct virtio_gpu_display_one {
+struct virtio_gpu_display_one
+{
   struct virtio_gpu_rect r;
   uint32_t enabled;
   uint32_t flags;
 };
 
-struct virtio_gpu_resp_display_info {
+struct virtio_gpu_resp_display_info
+{
   struct virtio_gpu_ctrl_hdr hdr;
   struct virtio_gpu_display_one pmodes[16];
 };
 
-struct virtio_gpu_resource_create_2d {
+struct virtio_gpu_resource_create_2d
+{
   struct virtio_gpu_ctrl_hdr hdr;
   uint32_t resource_id;
   uint32_t format;
@@ -59,26 +65,30 @@ struct virtio_gpu_resource_create_2d {
   uint32_t height;
 };
 
-struct virtio_gpu_resource_attach_backing {
+struct virtio_gpu_resource_attach_backing
+{
   struct virtio_gpu_ctrl_hdr hdr;
   uint32_t resource_id;
   uint32_t nr_entries;
 };
 
-struct virtio_gpu_mem_entry {
+struct virtio_gpu_mem_entry
+{
   uint64_t addr;
   uint32_t length;
   uint32_t padding;
 };
 
-struct virtio_gpu_set_scanout {
+struct virtio_gpu_set_scanout
+{
   struct virtio_gpu_ctrl_hdr hdr;
   struct virtio_gpu_rect r;
   uint32_t scanout_id;
   uint32_t resource_id;
 };
 
-struct virtio_gpu_transfer_to_host_2d {
+struct virtio_gpu_transfer_to_host_2d
+{
   struct virtio_gpu_ctrl_hdr hdr;
   struct virtio_gpu_rect r;
   uint64_t offset;
@@ -86,37 +96,38 @@ struct virtio_gpu_transfer_to_host_2d {
   uint32_t padding;
 };
 
-struct virtio_gpu_resource_flush {
+struct virtio_gpu_resource_flush
+{
   struct virtio_gpu_ctrl_hdr hdr;
   struct virtio_gpu_rect r;
   uint32_t resource_id;
   uint32_t padding;
 };
 
-static struct {
+static struct
+{
   int ready;
   int width;
   int height;
   int pages;
-  int dirty;
-  int dirty_x1;
-  int dirty_y1;
-  int dirty_x2;
-  int dirty_y2;
+  int dirty_count;
   VirtioMMIODevice dev;
   void *fb_pages[1024];
+  GpuDirtyRect dirty_rects[GPU_MAX_DIRTY_RECTS];
 } g_gpu;
 
 static uint8_t req_buf[16384];
 static uint8_t resp_buf[4096];
 static uint8_t status_byte;
 
-static int gpu_cmd(const void *req, uint32_t req_len, void *resp, uint32_t resp_len) {
+static int gpu_cmd(const void *req, uint32_t req_len, void *resp, uint32_t resp_len)
+{
   VirtioMMIODevice *d = &g_gpu.dev;
   int d0 = virtio_alloc_desc(d);
   int d1 = virtio_alloc_desc(d);
   int d2 = virtio_alloc_desc(d);
-  if (d0 < 0 || d1 < 0 || d2 < 0) return -1;
+  if (d0 < 0 || d1 < 0 || d2 < 0)
+    return -1;
 
   status_byte = 0xff;
   d->desc[d0].addr = (uint64_t)req;
@@ -143,14 +154,20 @@ static int gpu_cmd(const void *req, uint32_t req_len, void *resp, uint32_t resp_
   return 0;
 }
 
-static int fb_copy_rect(int x, int y, int w, int h, const uint32_t *pixels) {
-  if (!pixels) return -1;
-  for (int row = 0; row < h; row++) {
+static int fb_copy_rect(int x, int y, int w, int h, const uint32_t *pixels)
+{
+  if (!pixels)
+    return -1;
+  for (int row = 0; row < h; row++)
+  {
     int py = y + row;
-    if (py < 0 || py >= g_gpu.height) continue;
-    for (int col = 0; col < w; col++) {
+    if (py < 0 || py >= g_gpu.height)
+      continue;
+    for (int col = 0; col < w; col++)
+    {
       int px = x + col;
-      if (px < 0 || px >= g_gpu.width) continue;
+      if (px < 0 || px >= g_gpu.width)
+        continue;
       uint64_t off = ((uint64_t)py * (uint64_t)g_gpu.width + (uint64_t)px) * 4;
       int page_idx = (int)(off / PAGE_SIZE);
       int in_page = (int)(off % PAGE_SIZE);
@@ -160,34 +177,122 @@ static int fb_copy_rect(int x, int y, int w, int h, const uint32_t *pixels) {
   return 0;
 }
 
-static void fb_mark_dirty(int x, int y, int w, int h) {
+static int rect_clip(int x, int y, int w, int h, GpuDirtyRect *out)
+{
+  if (!out || w <= 0 || h <= 0)
+    return 0;
+
   int x1 = x;
   int y1 = y;
   int x2 = x + w;
   int y2 = y + h;
 
-  if (x1 < 0) x1 = 0;
-  if (y1 < 0) y1 = 0;
-  if (x2 > g_gpu.width) x2 = g_gpu.width;
-  if (y2 > g_gpu.height) y2 = g_gpu.height;
-  if (x1 >= x2 || y1 >= y2) return;
+  if (x1 < 0)
+    x1 = 0;
+  if (y1 < 0)
+    y1 = 0;
+  if (x2 > g_gpu.width)
+    x2 = g_gpu.width;
+  if (y2 > g_gpu.height)
+    y2 = g_gpu.height;
+  if (x1 >= x2 || y1 >= y2)
+    return 0;
 
-  if (!g_gpu.dirty) {
-    g_gpu.dirty = 1;
-    g_gpu.dirty_x1 = x1;
-    g_gpu.dirty_y1 = y1;
-    g_gpu.dirty_x2 = x2;
-    g_gpu.dirty_y2 = y2;
+  out->x = x1;
+  out->y = y1;
+  out->w = x2 - x1;
+  out->h = y2 - y1;
+  return 1;
+}
+
+static int rect_x2(const GpuDirtyRect *r)
+{
+  return r->x + r->w;
+}
+
+static int rect_y2(const GpuDirtyRect *r)
+{
+  return r->y + r->h;
+}
+
+static int rect_contains(const GpuDirtyRect *a, const GpuDirtyRect *b)
+{
+  return a->x <= b->x && a->y <= b->y &&
+         rect_x2(a) >= rect_x2(b) && rect_y2(a) >= rect_y2(b);
+}
+
+static int rect_touch_or_overlap(const GpuDirtyRect *a, const GpuDirtyRect *b)
+{
+  return a->x <= rect_x2(b) && rect_x2(a) >= b->x &&
+         a->y <= rect_y2(b) && rect_y2(a) >= b->y;
+}
+
+static void rect_union_into(GpuDirtyRect *dst, const GpuDirtyRect *src)
+{
+  int x1 = dst->x < src->x ? dst->x : src->x;
+  int y1 = dst->y < src->y ? dst->y : src->y;
+  int x2 = rect_x2(dst) > rect_x2(src) ? rect_x2(dst) : rect_x2(src);
+  int y2 = rect_y2(dst) > rect_y2(src) ? rect_y2(dst) : rect_y2(src);
+
+  dst->x = x1;
+  dst->y = y1;
+  dst->w = x2 - x1;
+  dst->h = y2 - y1;
+}
+
+static void fb_collapse_dirty(void)
+{
+  if (g_gpu.dirty_count <= 1)
+    return;
+  for (int i = 1; i < g_gpu.dirty_count; i++)
+  {
+    rect_union_into(&g_gpu.dirty_rects[0], &g_gpu.dirty_rects[i]);
+  }
+  g_gpu.dirty_count = 1;
+}
+
+static void fb_mark_dirty(int x, int y, int w, int h)
+{
+  GpuDirtyRect nr;
+  if (!rect_clip(x, y, w, h, &nr))
+    return;
+
+  for (int i = 0; i < g_gpu.dirty_count; i++)
+  {
+    if (rect_contains(&g_gpu.dirty_rects[i], &nr))
+      return;
+    if (rect_contains(&nr, &g_gpu.dirty_rects[i]) ||
+        rect_touch_or_overlap(&g_gpu.dirty_rects[i], &nr))
+    {
+      rect_union_into(&g_gpu.dirty_rects[i], &nr);
+
+      for (int j = 0; j < g_gpu.dirty_count; j++)
+      {
+        if (j == i)
+          continue;
+        if (!rect_touch_or_overlap(&g_gpu.dirty_rects[i], &g_gpu.dirty_rects[j]))
+          continue;
+        rect_union_into(&g_gpu.dirty_rects[i], &g_gpu.dirty_rects[j]);
+        g_gpu.dirty_rects[j] = g_gpu.dirty_rects[g_gpu.dirty_count - 1];
+        g_gpu.dirty_count--;
+        j--;
+      }
+      return;
+    }
+  }
+
+  if (g_gpu.dirty_count < GPU_MAX_DIRTY_RECTS)
+  {
+    g_gpu.dirty_rects[g_gpu.dirty_count++] = nr;
     return;
   }
 
-  if (x1 < g_gpu.dirty_x1) g_gpu.dirty_x1 = x1;
-  if (y1 < g_gpu.dirty_y1) g_gpu.dirty_y1 = y1;
-  if (x2 > g_gpu.dirty_x2) g_gpu.dirty_x2 = x2;
-  if (y2 > g_gpu.dirty_y2) g_gpu.dirty_y2 = y2;
+  rect_union_into(&g_gpu.dirty_rects[0], &nr);
+  fb_collapse_dirty();
 }
 
-static int fb_flush_rect(int x, int y, int w, int h) {
+static int fb_flush_rect(int x, int y, int w, int h)
+{
   struct virtio_gpu_transfer_to_host_2d tx;
   memset(&tx, 0, sizeof(tx));
   tx.hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
@@ -197,7 +302,8 @@ static int fb_flush_rect(int x, int y, int w, int h) {
   tx.r.height = (uint32_t)h;
   tx.offset = ((uint64_t)y * (uint64_t)g_gpu.width + (uint64_t)x) * 4;
   tx.resource_id = GPU_RESOURCE_ID;
-  if (gpu_cmd(&tx, sizeof(tx), resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0) return -1;
+  if (gpu_cmd(&tx, sizeof(tx), resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0)
+    return -1;
 
   struct virtio_gpu_resource_flush fl;
   memset(&fl, 0, sizeof(fl));
@@ -207,18 +313,22 @@ static int fb_flush_rect(int x, int y, int w, int h) {
   fl.r.width = (uint32_t)w;
   fl.r.height = (uint32_t)h;
   fl.resource_id = GPU_RESOURCE_ID;
-  if (gpu_cmd(&fl, sizeof(fl), resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0) return -1;
+  if (gpu_cmd(&fl, sizeof(fl), resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0)
+    return -1;
 
   return 0;
 }
 
-int virtio_gpu_init(void) {
+int virtio_gpu_init(void)
+{
   memset(&g_gpu, 0, sizeof(g_gpu));
-  if (virtio_mmio_find_device(VIRTIO_ID_GPU, 0, &g_gpu.dev) < 0) {
+  if (virtio_mmio_find_device(VIRTIO_ID_GPU, 0, &g_gpu.dev) < 0)
+  {
     printf("  VirtIO GPU not found\n");
     return -1;
   }
-  if (virtio_mmio_init_queue(&g_gpu.dev, VIRTIO_GPU_QUEUE_CTRL, GPU_NUM_DESC) < 0) {
+  if (virtio_mmio_init_queue(&g_gpu.dev, VIRTIO_GPU_QUEUE_CTRL, GPU_NUM_DESC) < 0)
+  {
     printf("  VirtIO GPU queue init failed\n");
     return -1;
   }
@@ -228,19 +338,25 @@ int virtio_gpu_init(void) {
   memset(&req, 0, sizeof(req));
   memset(&resp, 0, sizeof(resp));
   req.type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
-  if (gpu_cmd(&req, sizeof(req), &resp, sizeof(resp)) < 0) return -1;
-  if (resp.hdr.type != VIRTIO_GPU_RESP_OK_DISPLAY_INFO) return -1;
+  if (gpu_cmd(&req, sizeof(req), &resp, sizeof(resp)) < 0)
+    return -1;
+  if (resp.hdr.type != VIRTIO_GPU_RESP_OK_DISPLAY_INFO)
+    return -1;
 
   g_gpu.width = (int)resp.pmodes[0].r.width;
   g_gpu.height = (int)resp.pmodes[0].r.height;
-  if (g_gpu.width <= 0 || g_gpu.height <= 0) return -1;
+  if (g_gpu.width <= 0 || g_gpu.height <= 0)
+    return -1;
 
   uint64_t fb_size = (uint64_t)g_gpu.width * (uint64_t)g_gpu.height * 4;
   g_gpu.pages = (int)((fb_size + PAGE_SIZE - 1) / PAGE_SIZE);
-  if (g_gpu.pages > (int)(sizeof(g_gpu.fb_pages) / sizeof(g_gpu.fb_pages[0]))) return -1;
-  for (int i = 0; i < g_gpu.pages; i++) {
+  if (g_gpu.pages > (int)(sizeof(g_gpu.fb_pages) / sizeof(g_gpu.fb_pages[0])))
+    return -1;
+  for (int i = 0; i < g_gpu.pages; i++)
+  {
     g_gpu.fb_pages[i] = kalloc();
-    if (!g_gpu.fb_pages[i]) return -1;
+    if (!g_gpu.fb_pages[i])
+      return -1;
     memset(g_gpu.fb_pages[i], 0, PAGE_SIZE);
   }
 
@@ -251,7 +367,8 @@ int virtio_gpu_init(void) {
   c2d->format = VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM;
   c2d->width = (uint32_t)g_gpu.width;
   c2d->height = (uint32_t)g_gpu.height;
-  if (gpu_cmd(c2d, sizeof(*c2d), resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0) return -1;
+  if (gpu_cmd(c2d, sizeof(*c2d), resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0)
+    return -1;
 
   struct virtio_gpu_resource_attach_backing *ab = (struct virtio_gpu_resource_attach_backing *)req_buf;
   memset(req_buf, 0, sizeof(req_buf));
@@ -259,13 +376,15 @@ int virtio_gpu_init(void) {
   ab->resource_id = GPU_RESOURCE_ID;
   ab->nr_entries = (uint32_t)g_gpu.pages;
   struct virtio_gpu_mem_entry *me = (struct virtio_gpu_mem_entry *)(ab + 1);
-  for (int i = 0; i < g_gpu.pages; i++) {
+  for (int i = 0; i < g_gpu.pages; i++)
+  {
     me[i].addr = (uint64_t)g_gpu.fb_pages[i];
     me[i].length = PAGE_SIZE;
     me[i].padding = 0;
   }
   uint32_t ab_len = sizeof(*ab) + (uint32_t)g_gpu.pages * sizeof(struct virtio_gpu_mem_entry);
-  if (gpu_cmd(ab, ab_len, resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0) return -1;
+  if (gpu_cmd(ab, ab_len, resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0)
+    return -1;
 
   struct virtio_gpu_set_scanout sc;
   memset(&sc, 0, sizeof(sc));
@@ -276,7 +395,8 @@ int virtio_gpu_init(void) {
   sc.r.height = (uint32_t)g_gpu.height;
   sc.scanout_id = 0;
   sc.resource_id = GPU_RESOURCE_ID;
-  if (gpu_cmd(&sc, sizeof(sc), resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0) return -1;
+  if (gpu_cmd(&sc, sizeof(sc), resp_buf, sizeof(struct virtio_gpu_ctrl_hdr)) < 0)
+    return -1;
 
   virtio_mmio_set_driver_ok(&g_gpu.dev);
   g_gpu.ready = 1;
@@ -284,58 +404,117 @@ int virtio_gpu_init(void) {
   return 0;
 }
 
-int virtio_gpu_is_ready(void) {
+int virtio_gpu_is_ready(void)
+{
   return g_gpu.ready;
 }
 
-int virtio_gpu_resolution(int *w, int *h) {
-  if (!g_gpu.ready) return -1;
-  if (w) *w = g_gpu.width;
-  if (h) *h = g_gpu.height;
+int virtio_gpu_resolution(int *w, int *h)
+{
+  if (!g_gpu.ready)
+    return -1;
+  if (w)
+    *w = g_gpu.width;
+  if (h)
+    *h = g_gpu.height;
   return 0;
 }
 
-int virtio_gpu_fbwrite(int x, int y, int w, int h, const uint32_t *pixels) {
-  if (!g_gpu.ready || w <= 0 || h <= 0) return -1;
-  if (fb_copy_rect(x, y, w, h, pixels) < 0) return -1;
+uint64_t virtio_gpu_fb_size(void)
+{
+  if (!g_gpu.ready)
+    return 0;
+  return (uint64_t)g_gpu.width * (uint64_t)g_gpu.height * 4ULL;
+}
+
+int virtio_gpu_fb_page(uint64_t offset, uint64_t *pa)
+{
+  if (!g_gpu.ready || !pa)
+    return -1;
+  if ((offset % PAGE_SIZE) != 0)
+    return -1;
+  if (offset >= virtio_gpu_fb_size())
+    return -1;
+
+  uint64_t page_idx = offset / PAGE_SIZE;
+  if (page_idx >= (uint64_t)g_gpu.pages)
+    return -1;
+  *pa = (uint64_t)g_gpu.fb_pages[page_idx];
+  return 0;
+}
+
+int virtio_gpu_fbwrite(int x, int y, int w, int h, const uint32_t *pixels)
+{
+  if (!g_gpu.ready || w <= 0 || h <= 0)
+    return -1;
+  if (fb_copy_rect(x, y, w, h, pixels) < 0)
+    return -1;
   fb_mark_dirty(x, y, w, h);
   return 0;
 }
 
-int virtio_gpu_fbsync(void) {
-  if (!g_gpu.ready) return -1;
-  if (!g_gpu.dirty) return 0;
-
-  int x = g_gpu.dirty_x1;
-  int y = g_gpu.dirty_y1;
-  int w = g_gpu.dirty_x2 - g_gpu.dirty_x1;
-  int h = g_gpu.dirty_y2 - g_gpu.dirty_y1;
-  if (w <= 0 || h <= 0) {
-    g_gpu.dirty = 0;
-    return 0;
-  }
-
-  if (fb_flush_rect(x, y, w, h) < 0) return -1;
-  g_gpu.dirty = 0;
+int virtio_gpu_fbdirty(int x, int y, int w, int h)
+{
+  if (!g_gpu.ready || w <= 0 || h <= 0)
+    return -1;
+  fb_mark_dirty(x, y, w, h);
   return 0;
 }
 
-int virtio_gpu_fbdraw(int x, int y, int w, int h, const uint32_t *pixels, int sync) {
-  if (virtio_gpu_fbwrite(x, y, w, h, pixels) < 0) return -1;
-  if (!sync) return 0;
+int virtio_gpu_fbdirty_rects(const GpuDirtyRect *rects, size_t count)
+{
+  if (!g_gpu.ready || !rects)
+    return -1;
+  for (size_t i = 0; i < count; i++)
+  {
+    fb_mark_dirty(rects[i].x, rects[i].y, rects[i].w, rects[i].h);
+  }
+  return 0;
+}
+
+int virtio_gpu_fbsync(void)
+{
+  if (!g_gpu.ready)
+    return -1;
+  if (g_gpu.dirty_count == 0)
+    return 0;
+
+  for (int i = 0; i < g_gpu.dirty_count; i++)
+  {
+    GpuDirtyRect *r = &g_gpu.dirty_rects[i];
+    if (r->w <= 0 || r->h <= 0)
+      continue;
+    if (fb_flush_rect(r->x, r->y, r->w, r->h) < 0)
+      return -1;
+  }
+  g_gpu.dirty_count = 0;
+  return 0;
+}
+
+int virtio_gpu_fbdraw(int x, int y, int w, int h, const uint32_t *pixels, int sync)
+{
+  if (virtio_gpu_fbwrite(x, y, w, h, pixels) < 0)
+    return -1;
+  if (!sync)
+    return 0;
   return virtio_gpu_fbsync();
 }
 
-void virtio_gpu_poll(void) {
-  if (!g_gpu.ready) return;
+void virtio_gpu_poll(void)
+{
+  if (!g_gpu.ready)
+    return;
   virtio_ack_interrupt(&g_gpu.dev);
 }
 
-int virtio_gpu_match_irq(int irq) {
+int virtio_gpu_match_irq(int irq)
+{
   return g_gpu.ready && irq == (int)g_gpu.dev.irq;
 }
 
-void virtio_gpu_handle_irq(void) {
-  if (!g_gpu.ready) return;
+void virtio_gpu_handle_irq(void)
+{
+  if (!g_gpu.ready)
+    return;
   virtio_ack_interrupt(&g_gpu.dev);
 }

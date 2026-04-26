@@ -51,6 +51,8 @@ uint64_t timer_get_time();
 
 int device_fs_read(const char *name, uint32_t *off, void *buf, size_t n);
 int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n);
+uint64_t device_mmap_size(const char *name);
+int device_mmap_page(const char *name, uint64_t offset, uint64_t *pa);
 
 void init_device();
 void device_poll();

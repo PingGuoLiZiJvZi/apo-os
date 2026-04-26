@@ -108,6 +108,20 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags)
   if (flags & SDL_HWSURFACE)
   {
     NDL_OpenCanvas(&width, &height);
+    if (bpp == 32)
+    {
+      int pitch = 0;
+      uint32_t *fb = NDL_GetFramebuffer(&pitch);
+      if (fb && pitch == width * 4)
+      {
+        SDL_Surface *s = SDL_CreateRGBSurfaceFrom(fb, width, height, bpp, pitch,
+                                                  DEFAULT_RMASK, DEFAULT_GMASK,
+                                                  DEFAULT_BMASK, DEFAULT_AMASK);
+        if (s)
+          s->flags = flags | SDL_PREALLOC;
+        return s;
+      }
+    }
   }
   return SDL_CreateRGBSurface(flags, width, height, bpp, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
 }
@@ -189,6 +203,13 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
     y = 0;
     w = s->w;
     h = s->h;
+  }
+
+  if ((s->flags & SDL_HWSURFACE) && (s->flags & SDL_PREALLOC) &&
+      s->format->BitsPerPixel == 32)
+  {
+    NDL_FlushRect(x, y, w, h);
+    return;
   }
 
   if (s->format->BitsPerPixel == 32)

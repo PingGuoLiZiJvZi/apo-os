@@ -12,6 +12,7 @@
 #define PTE_W (1L << 2) // Write
 #define PTE_X (1L << 3) // Execute
 #define PTE_U (1L << 4) // User
+#define PTE_SHARED (1L << 8) // RSW: mapped page is not owned by this process
 
 // PTE <-> PA conversions
 #define PTE2PA(pte) (((pte) >> 10) << 12)
