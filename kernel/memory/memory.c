@@ -76,14 +76,6 @@ uint64_t *kernel_pagetable;
 // Return the address of the PTE in page table 'pagetable' that corresponds to virtual address 'va'. 
 // If 'alloc' is true, create any missing page directory pages.
 uint64_t *walk(uint64_t *pagetable, uint64_t va, int alloc) {
-    if (va >= (1ULL << 38)) { 
-        // Sv39 supports 39-bit VA (up to 512GB). 
-        // We do not handle negative upper half logic thoroughly right now.
-        // We just ensure we don't exceed max positive mapped range for identity mapping.
-        // Actually, RISC-V requires bits 63:39 to match bit 38, so typical valid VAs 
-        // are 0x000000x... or 0xFFFFFFx... 
-        // For simple identity mapping on QEMU, va is around 0x80000000 which is fine.
-    }
 
     for (int level = 2; level > 0; level--) {
         uint64_t *pte = &pagetable[PX(level, va)];

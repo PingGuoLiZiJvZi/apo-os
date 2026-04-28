@@ -254,10 +254,7 @@ static int sys_brk(Context *c) {
 }
 
 static int sys_getpid(void) {
-    if (current_proc >= &PCBs[0] && current_proc < &PCBs[MAX_PROCS]) {
-        return (int)(current_proc - &PCBs[0]) + 1;
-    }
-    return 0;
+    return proc_current_pid();
 }
 
 static int sys_gettimeofday(Context *c) {

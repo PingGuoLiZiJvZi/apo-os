@@ -1,5 +1,6 @@
 #include "proc.h"
 #include "../device/device.h"
+#include "../device/virtual_gpu.h"
 #include "../libc/stdio.h"
 #include "../libc/string.h"
 #include "../memory/memory.h"
@@ -20,7 +21,13 @@ static inline PCB *pcb_from_pid(int pid) {
     return &PCBs[pid - 1];
 }
 
+int proc_current_pid(void) {
+    int pid = pid_from_pcb(current_proc);
+    return pid > 0 ? pid : 0;
+}
+
 static void reset_pcb_slot(PCB *pcb) {
+    DisplayPCB *display = pcb->display;
     pcb->cp = 0;
     pcb->as.start = 0;
     pcb->as.end = 0;
@@ -37,12 +44,8 @@ static void reset_pcb_slot(PCB *pcb) {
     pcb->proc_state = EMPTY_PROC;
     pcb->exit_status = 0;
     pcb->sleep_deadline = 0;
-    pcb->shadow_fb_npages = 0;
-    pcb->fb_dirty = 0;
-    pcb->fb_dirty_x = 0;
-    pcb->fb_dirty_y = 0;
-    pcb->fb_dirty_w = 0;
-    pcb->fb_dirty_h = 0;
+    pcb->display = display;
+    virtual_gpu_reset_display(display);
 }
 
 static int parent_has_child_pid(PCB *parent, int pid) {
@@ -237,12 +240,7 @@ void proc_exec_reclaim(PCB *pcb) {
     }
     pcb->max_brk = 0;
     pcb->mmap_base = 0;
-    pcb->shadow_fb_npages = 0;
-    pcb->fb_dirty = 0;
-    pcb->fb_dirty_x = 0;
-    pcb->fb_dirty_y = 0;
-    pcb->fb_dirty_w = 0;
-    pcb->fb_dirty_h = 0;
+    virtual_gpu_reset_display(pcb->display);
 }
 
 static void terminate_proc(PCB *pcb, int status) {
@@ -261,12 +259,7 @@ static void terminate_proc(PCB *pcb, int status) {
         free_user_pages(&pcb->as);
     }
 
-    pcb->shadow_fb_npages = 0;
-    pcb->fb_dirty = 0;
-    pcb->fb_dirty_x = 0;
-    pcb->fb_dirty_y = 0;
-    pcb->fb_dirty_w = 0;
-    pcb->fb_dirty_h = 0;
+    virtual_gpu_reset_display(pcb->display);
 
     pcb->max_brk = 0;
     pcb->mmap_base = 0;
@@ -331,6 +324,8 @@ int proc_fork_current(Context *parent_ctx) {
     for (int i = 0; i < MAX_SUB_PROCS; i++) {
         child->sub_procs[i] = -1;
     }
+    child->display = virtual_gpu_display_pcb(free_slot + 1);
+    virtual_gpu_reset_display(child->display);
 
     protect(&child->as);
     child->max_brk = parent->max_brk;
@@ -442,9 +437,12 @@ void init_proc(void) {
     printf("Initializing process subsystem...\n");
     memset(PCBs, 0, sizeof(PCBs));
     memset(&boot_pcb, 0, sizeof(boot_pcb));
+    virtual_gpu_init_displays();
 
     for(int i = 0; i < MAX_PROCS; i++) {
         reset_pcb_slot(&PCBs[i]);
+        PCBs[i].display = virtual_gpu_display_pcb(i + 1);
+        virtual_gpu_reset_display(PCBs[i].display);
     }
     
     // Desktop bootstrap: run desktop compositor as first process.
