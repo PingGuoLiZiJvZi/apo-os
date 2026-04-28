@@ -22,6 +22,7 @@
 /// \brief Handles sound emulation using the SDL.
 
 #include <klib-macros.h>
+#include <am.h>
 #include "sdl.h"
 #include "../../config.h"
 
@@ -127,7 +128,9 @@ WriteSound(int32 *buf,
     sbuf.start = buf16;
     int free;
     while (Count) {
-      while ((free = GetWriteSound()) == 0);  // wait until there is free space
+      while ((free = GetWriteSound()) == 0) {
+        yield();
+      }
       int nrplay = (free > Count ? Count : free);
       sbuf.end = (uint16_t *)sbuf.start + nrplay;
       io_write(AM_AUDIO_PLAY, sbuf);

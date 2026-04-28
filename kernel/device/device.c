@@ -33,6 +33,11 @@ static void input_focus_set(int pid) {
     }
 }
 
+static int current_has_input_focus(void) {
+    int pid = proc_current_pid();
+    return pid > 0 && pid == input_focus_current();
+}
+
 static inline void mmio_write8(uint64_t addr, uint8_t val) {
     *(volatile uint8_t *)addr = val;
 }
@@ -238,6 +243,10 @@ int device_fs_write(const char *name, uint32_t *off, const void *buf, size_t n) 
     }
 
     if (strcmp(name, "audio") == 0) {
+        if (!current_has_input_focus()) {
+            if (off) *off += (uint32_t)n;
+            return (int)n;
+        }
         int w = virtio_sound_write(buf, n);
         if (w > 0 && off) *off += (uint32_t)w;
         return w;

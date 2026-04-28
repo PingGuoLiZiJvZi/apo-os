@@ -3,6 +3,7 @@
 
 #include "sdl.h"
 #include "throttle.h"
+#include <am.h>
 
 static uint64 Lasttime, Nexttime;
 static int32 desired_fps;
@@ -56,7 +57,7 @@ SpeedThrottle()
   //delay
   uint64 now;
   while ((now = FCEUD_GetTime()) - cur_time < time_left)
-    ;
+    yield();
 
 	if(!InFrame)
 	{

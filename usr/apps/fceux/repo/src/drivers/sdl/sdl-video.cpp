@@ -126,18 +126,17 @@ BlitScreen(uint8 *XBuf)
 	// perform the blit, converting bpp if necessary
   //Blit8ToHigh(XBuf, (uint8 *)canvas, NWIDTH, s_tlines, NWIDTH * 4, 1, 1);
 
-  static uint32_t canvas_line[NWIDTH];
   int i;
 #ifdef HAS_GUI
+  static uint32_t canvas[NWIDTH * s_tlines];
   int x = (io_read(AM_GPU_CONFIG).width - 256) / 2;
   int y = (io_read(AM_GPU_CONFIG).height - 240) / 2;
   for (i = 0; i < s_tlines; i ++, XBuf += NWIDTH) {
-    Blit8ToHigh(XBuf, (uint8 *)canvas_line, NWIDTH, 1, NWIDTH * 4, 1, 1);
-    io_write(AM_GPU_FBDRAW, x, y, canvas_line, NWIDTH, 1, false);
-    y ++;
+    Blit8ToHigh(XBuf, (uint8 *)(canvas + i * NWIDTH), NWIDTH, 1, NWIDTH * 4, 1, 1);
   }
-  io_write(AM_GPU_FBDRAW, 0, 0, NULL, 0, 0, true);
+  io_write(AM_GPU_FBDRAW, x, y, canvas, NWIDTH, s_tlines, true);
 #else
+  static uint32_t canvas_line[NWIDTH];
   printf("\033[0;0H");
   for (i = 0; i < s_tlines; i += 4, XBuf += NWIDTH * 4) {
     Blit8ToHigh(XBuf, (uint8 *)canvas_line, NWIDTH, 1, NWIDTH * 4, 1, 1);
