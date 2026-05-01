@@ -7,6 +7,10 @@ audio, keyboard, mouse, and a simple desktop environment.
 
 The current desktop can launch several user programs and games, including
 Snake, Flappy Bird, PAL, and a NES emulator running Mario.
+## Screenshots
+![开机动画阶段1](./kernel/docs/images/startup1.png)
+![开机动画阶段2](./kernel/docs/images/startup2.png)
+![桌面效果展示](./kernel/docs/images/desktop.png)
 
 ## Features
 
